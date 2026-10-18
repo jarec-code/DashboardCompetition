@@ -5,7 +5,6 @@ import { api, query } from "./client";
 export type CompetitorStatus = "active" | "paused" | "archived";
 export type CompetitorType = "direct" | "distributor" | "marketplace" | "other";
 export type SourceType = "api" | "feed" | "html";
-export type ParserType = "auto" | "jsonld" | "microdata" | "opengraph" | "css";
 export type VatMode = "with_vat" | "without_vat" | "unknown";
 
 export interface Page<T> {
@@ -42,7 +41,7 @@ export interface CssSelectors {
 
 export interface ScrapeConfigInput {
   source_type: SourceType;
-  parser_type: ParserType;
+  parser_type: string;
   parser_config: Partial<CssSelectors>;
   timeout_seconds: number;
   max_concurrency: number;

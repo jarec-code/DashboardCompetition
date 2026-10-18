@@ -7,6 +7,7 @@ import { useAddOffers, useOffers, type Offer } from "../../api/offers";
 import { useIsAdmin } from "../../auth/auth";
 import { DataTable, type Column } from "../../components/DataTable";
 import { MATCH_LABELS } from "../products/labels";
+import { HistoryModal } from "./HistoryModal";
 import { AssignModal } from "./AssignModal";
 import { OfferActions, OfferMatchCell, OfferPriceCell, OfferUrlCell } from "./OfferCells";
 
@@ -54,6 +55,7 @@ export function OffersPanel({ competitorId, domain, archived }: { competitorId: 
   const isAdmin = useIsAdmin();
   const [adding, addForm] = useDisclosure();
   const [assigning, setAssigning] = useState<Offer | null>(null);
+  const [history, setHistory] = useState<Offer | null>(null);
   const [search, setSearch] = useState("");
   const [q] = useDebouncedValue(search.trim(), 300);
   const [matchStatus, setMatchStatus] = useState("");
@@ -68,7 +70,7 @@ export function OffersPanel({ competitorId, domain, archived }: { competitorId: 
     { key: "status", label: "Stav", nowrap: true, render: (o) => o.status === "active" ? "sleduje sa"
       : <Badge variant="light" color="yellow">{o.status === "paused" ? "pozastavené" : "archivované"}</Badge> },
     ...(isAdmin ? [{ key: "actions", label: "", align: "right" as const,
-                     render: (o: Offer) => <OfferActions offer={o} onAssign={setAssigning} /> }] : []),
+                     render: (o: Offer) => <OfferActions offer={o} onAssign={setAssigning} onHistory={setHistory} /> }] : []),
   ];
 
   return (
@@ -92,6 +94,7 @@ export function OffersPanel({ competitorId, domain, archived }: { competitorId: 
                  minWidth={860}
                  emptyText={q || matchStatus ? "Žiadna ponuka nezodpovedá filtrom." : "Zatiaľ nie sú sledované žiadne produktové URL."} />
       <AssignModal offer={assigning} onClose={() => setAssigning(null)} />
+      <HistoryModal offer={history} onClose={() => setHistory(null)} />
     </Stack>
   );
 }

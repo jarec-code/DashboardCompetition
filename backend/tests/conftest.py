@@ -4,6 +4,7 @@ import os
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql+psycopg://localhost/competition_test")
 os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
+os.environ["EMBEDDED_WORKER"] = "false"  # tests process jobs explicitly
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

@@ -1,4 +1,4 @@
-import type { CompetitorStatus, CompetitorType, ParserType, ScrapeRun, SourceType, VatMode } from "../../api/competitors";
+import type { CompetitorStatus, CompetitorType, ScrapeRun, SourceType, VatMode } from "../../api/competitors";
 
 export const STATUS_LABELS: Record<CompetitorStatus, { label: string; color: string }> = {
   active: { label: "Aktívny", color: "green" },
@@ -14,14 +14,6 @@ export const TYPE_LABELS: Record<CompetitorType, string> = {
 };
 
 export const SOURCE_LABELS: Record<SourceType, string> = { api: "API", feed: "Produktový feed", html: "HTML stránka" };
-
-export const PARSER_LABELS: Record<ParserType, { label: string; description: string }> = {
-  auto: { label: "Automaticky", description: "Skúsi JSON-LD, microdata a Open Graph v tomto poradí." },
-  jsonld: { label: "JSON-LD", description: "Štruktúrované dáta schema.org v značke <script type=\"application/ld+json\">." },
-  microdata: { label: "Microdata", description: "Atribúty itemprop podľa schema.org." },
-  opengraph: { label: "Open Graph", description: "Meta značky product:price:amount." },
-  css: { label: "CSS selektory", description: "Vlastné selektory pre stránky bez štruktúrovaných dát." },
-};
 
 export const VAT_LABELS: Record<VatMode, string> = {
   with_vat: "Ceny s DPH",

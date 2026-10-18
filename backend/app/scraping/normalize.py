@@ -2,6 +2,8 @@
 import re
 from decimal import Decimal, InvalidOperation
 
+from app.services.identifiers import normalize_ean, normalize_isbn, normalize_sku
+
 _CURRENCY_SYMBOLS = (("€", "EUR"), ("Kč", "CZK"), ("zł", "PLN"), ("Ft", "HUF"), ("£", "GBP"), ("$", "USD"))
 _CURRENCY_CODE_RE = re.compile(r"\b(EUR|USD|GBP|CZK|PLN|HUF|CHF)\b", re.I)
 
@@ -50,3 +52,70 @@ def detect_currency(text: object) -> str | None:
             return code
     match = _CURRENCY_CODE_RE.search(text)
     return match.group(1).upper() if match else None
+
+
+# ---------- availability ----------
+
+_SCHEMA_AVAILABILITY = {
+    "instock": "in_stock", "instoreonly": "in_stock", "onlineonly": "in_stock", "limitedavailability": "in_stock",
+    "outofstock": "out_of_stock", "soldout": "out_of_stock", "discontinued": "out_of_stock",
+    "preorder": "preorder", "presale": "preorder", "backorder": "preorder",
+}
+# Checked in order: negative phrases first ("není skladem" contains "skladem").
+_TEXT_AVAILABILITY = [
+    ("out_of_stock", ("není skladem", "nie je na sklade", "nie je skladom", "vyprodáno", "vypredané", "vypredaný",
+                      "nedostupn", "out of stock", "sold out", "nelze objednat", "nedá sa objednať")),
+    ("preorder", ("předprodej", "predpredaj", "předobjednávk", "predobjednávk", "pre-order", "preorder",
+                  "připravujeme", "pripravujeme", "očekáváme", "očakávame")),
+    ("in_stock", ("skladem", "skladom", "na sklade", "na skladě", "in stock", "dostupné", "dostupný", "k dispozici")),
+]
+
+
+def normalize_availability(value: object) -> str:
+    """Map schema.org URLs and Czech/Slovak/English shop texts to in_stock/out_of_stock/preorder/unknown."""
+    if not value:
+        return "unknown"
+    text = str(value).strip().lower()
+    key = text.rsplit("/", 1)[-1].replace(" ", "").replace("_", "")
+    if key in _SCHEMA_AVAILABILITY:
+        return _SCHEMA_AVAILABILITY[key]
+    for status, phrases in _TEXT_AVAILABILITY:
+        if any(p in text for p in phrases):
+            return status
+    return "unknown"
+
+
+# ---------- identifiers ----------
+
+_LABELLED_ID = re.compile(r"\b(ISBN(?:-1[03])?|EAN|GTIN(?:-?1[34])?|SKU|kód zboží|kód tovaru|katalogové číslo)"
+                          r"\s*[:\-]?\s*([0-9Xx][0-9Xx \-]{6,20}[0-9Xx])", re.I)
+_BARE_GTIN = re.compile(r"(?<!\d)(\d{13})(?!\d)")
+
+
+def find_identifiers(text: str | None) -> dict[str, str]:
+    """ISBN/EAN/SKU found in page text. Only valid codes (check digit) are returned.
+
+    Unlabelled 13-digit numbers count only as ISBN (prefix 978/979): any other bare number could be
+    unrelated, and a wrong identifier would assign the offer to a wrong product automatically.
+    """
+    found: dict[str, str] = {}
+    if not text:
+        return found
+    for label, raw in _LABELLED_ID.findall(text):
+        label = label.lower()
+        if label.startswith("isbn"):
+            if (isbn := normalize_isbn(raw)) and "isbn" not in found:
+                found["isbn"] = isbn
+        elif label.startswith(("ean", "gtin")):
+            if (ean := normalize_ean(raw)) and "ean" not in found:
+                found["ean"] = ean
+        elif sku := normalize_sku(raw):
+            found.setdefault("sku", sku)
+    if "ean" not in found and "isbn" not in found:
+        for code in _BARE_GTIN.findall(text):
+            if code[:3] in ("978", "979") and normalize_ean(code):
+                found["ean"] = code
+                break
+    if (ean := found.get("ean")) and ean[:3] in ("978", "979") and "isbn" not in found:
+        found["isbn"] = normalize_isbn(ean) or ean
+    return found

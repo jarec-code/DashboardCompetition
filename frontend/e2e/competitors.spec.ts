@@ -105,13 +105,13 @@ test.describe.serial("Konkurencia", () => {
     await login(page, "admin@e2e.test");
     await page.getByRole("link", { name: "Alter", exact: true }).click();
     await page.getByRole("tab", { name: "Nastavenia scrapingu" }).click();
-    await expect(page.getByText("Verzia parsera 1")).toBeVisible();
+    await expect(page.getByText("Verzia nastavenia parsera 1")).toBeVisible();
     await page.getByRole("combobox", { name: "Parser" }).click();
     await page.getByRole("option", { name: "CSS selektory" }).click();
     await page.getByLabel("Cena (povinné)").fill(".vatPricePD");
     await page.getByLabel("Názov produktu").fill("h1");
     await page.getByRole("button", { name: "Uložiť nastavenia" }).click();
-    await expect(page.getByText("Verzia parsera 2")).toBeVisible();
+    await expect(page.getByText("Verzia nastavenia parsera 2")).toBeVisible();
 
     await page.getByLabel("Cena (povinné)").fill("div[[");
     await page.getByRole("button", { name: "Uložiť nastavenia" }).click();

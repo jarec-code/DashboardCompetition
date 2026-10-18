@@ -12,6 +12,7 @@ import { useDeleteProduct, useProduct } from "../../api/products";
 import { useIsAdmin } from "../../auth/auth";
 import { DataTable, type Column } from "../../components/DataTable";
 import { formatDateTime, formatMoney } from "../../format";
+import { HistoryModal } from "../offers/HistoryModal";
 import { AssignModal } from "../offers/AssignModal";
 import { OfferActions, OfferPriceCell, OfferUrlCell } from "../offers/OfferCells";
 import { METHOD_LABELS, PRIORITY_LABELS } from "./labels";
@@ -38,6 +39,7 @@ export function ProductDetailPage() {
   const [editOpened, edit] = useDisclosure();
   const [confirmOpened, confirm] = useDisclosure();
   const [assigning, setAssigning] = useState<Offer | null>(null);
+  const [history, setHistory] = useState<Offer | null>(null);
 
   if (isLoading) return <Center p="xl"><Loader /></Center>;
   if (error || !product) return <Alert color="red" title="Produkt sa nepodarilo načítať">{error?.message}</Alert>;
@@ -52,7 +54,7 @@ export function ProductDetailPage() {
     { key: "method", label: "Párovanie", nowrap: true,
       render: (o) => (o.matching_method ? METHOD_LABELS[o.matching_method] : "—") },
     ...(isAdmin ? [{ key: "actions", label: "", align: "right" as const,
-                     render: (o: Offer) => <OfferActions offer={o} onAssign={setAssigning} /> }] : []),
+                     render: (o: Offer) => <OfferActions offer={o} onAssign={setAssigning} onHistory={setHistory} /> }] : []),
   ];
 
   return (
@@ -100,6 +102,7 @@ export function ProductDetailPage() {
 
       <ProductFormModal opened={editOpened} onClose={edit.close} product={product} />
       <AssignModal offer={assigning} onClose={() => setAssigning(null)} />
+      <HistoryModal offer={history} onClose={() => setHistory(null)} />
       <Modal opened={confirmOpened} onClose={confirm.close} title={`Zmazať ${product.name}?`}>
         <Text size="sm">Priradené ponuky konkurentov sa nezmažú: zostanú sledované aj s cenovou históriou a vrátia sa
           do párovania.</Text>

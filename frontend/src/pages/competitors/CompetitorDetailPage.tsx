@@ -56,7 +56,7 @@ function Monitoring({ competitorId }: { competitorId: number }) {
   if (!runs.data?.length) {
     return (
       <Text c="dimmed" size="sm">
-        Zatiaľ neprebehla žiadna kontrola. Automatické kontroly a ich výsledky pribudnú v etapách 4 a 5.
+        Zatiaľ neprebehla žiadna kontrola. Spustite ju tlačidlom „Skontrolovať teraz“ pri ponuke; automatické kontroly pribudnú v etape 5.
       </Text>
     );
   }
@@ -132,7 +132,8 @@ export function CompetitorDetailPage() {
                          archived={competitor.status === "archived"} />
           </Tabs.Panel>
           <Tabs.Panel value="scraping" p="md">
-            <ScrapeConfigForm competitorId={competitor.id} config={competitor.scrape_config} readOnly={!isAdmin} />
+            <ScrapeConfigForm competitorId={competitor.id} baseUrl={competitor.base_url} config={competitor.scrape_config}
+                              readOnly={!isAdmin} />
           </Tabs.Panel>
           <Tabs.Panel value="monitoring" p="md"><Monitoring competitorId={competitor.id} /></Tabs.Panel>
         </Tabs>

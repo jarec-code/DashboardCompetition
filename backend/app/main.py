@@ -1,18 +1,37 @@
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.api import auth, competitors, offers, products, users
+from app.api import auth, competitors, jobs, offers, products, users
 from app.api.deps import csrf_protect
 from app.config import get_settings
 from app.db import engine
 
 settings = get_settings()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    worker = None
+    if settings.embedded_worker:
+        from app.worker.worker import start_embedded
+        worker = start_embedded(settings)
+    yield
+    if worker:
+        thread, stop = worker
+        stop.set()
+        thread.join(timeout=30)
+
 
 app = FastAPI(title="Competition Checker", docs_url="/api/docs" if not settings.is_production else None,
-              redoc_url=None, openapi_url="/api/openapi.json" if not settings.is_production else None)
+              redoc_url=None, openapi_url="/api/openapi.json" if not settings.is_production else None,
+              lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, session_cookie="cc_session",
                    max_age=settings.session_max_age_seconds, same_site="lax", https_only=settings.is_production)
 
@@ -33,6 +52,7 @@ api.include_router(users.router)
 api.include_router(competitors.router)
 api.include_router(products.router)
 api.include_router(offers.router)
+api.include_router(jobs.router)
 app.include_router(auth.router, prefix="/api")  # login works without a CSRF token; others check it
 app.include_router(api)
 

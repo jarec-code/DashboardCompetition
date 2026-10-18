@@ -1,13 +1,14 @@
 import { ActionIcon, Anchor, Badge, Group, Menu, Stack, Text, Tooltip } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import {
-  IconDots, IconLink, IconPlayerPause, IconPlayerPlay, IconRefresh, IconTrash, IconUnlink,
+  IconDots, IconHistory, IconLink, IconPlayerPause, IconPlayerPlay, IconRefresh, IconTrash, IconUnlink,
 } from "@tabler/icons-react";
 import { Link } from "react-router-dom";
 
 import { useAssignOffer, useRemoveOffer, useUpdateOffer, type Offer } from "../../api/offers";
 import { formatDateTime, formatMoney } from "../../format";
 import { AVAILABILITY_LABELS, MATCH_LABELS, METHOD_LABELS } from "../products/labels";
+import { CheckButton } from "./CheckButton";
 
 export function OfferUrlCell({ offer }: { offer: Offer }) {
   const path = (() => { try { return new URL(offer.product_url).pathname; } catch { return offer.product_url; } })();
@@ -57,7 +58,9 @@ export function OfferMatchCell({ offer, showCompetitor = false }: { offer: Offer
   );
 }
 
-export function OfferActions({ offer, onAssign }: { offer: Offer; onAssign: (offer: Offer) => void }) {
+export function OfferActions({ offer, onAssign, onHistory }: {
+  offer: Offer; onAssign: (offer: Offer) => void; onHistory: (offer: Offer) => void;
+}) {
   const assign = useAssignOffer();
   const update = useUpdateOffer();
   const remove = useRemoveOffer();
@@ -65,6 +68,7 @@ export function OfferActions({ offer, onAssign }: { offer: Offer; onAssign: (off
 
   return (
     <Group gap={4} wrap="nowrap" justify="flex-end">
+      <CheckButton offer={offer} />
       <Tooltip label="Priradiť k produktu" withArrow>
         <ActionIcon variant="light" aria-label="Priradiť k produktu" onClick={() => onAssign(offer)}>
           <IconLink size={16} />
@@ -75,6 +79,8 @@ export function OfferActions({ offer, onAssign }: { offer: Offer; onAssign: (off
           <ActionIcon variant="subtle" color="gray" aria-label="Ďalšie akcie"><IconDots size={16} /></ActionIcon>
         </Menu.Target>
         <Menu.Dropdown>
+          <Menu.Item leftSection={<IconHistory size={14} />} onClick={() => onHistory(offer)}>História zmien</Menu.Item>
+          <Menu.Divider />
           {offer.match_status !== "ignored" && (
             <Menu.Item leftSection={<IconUnlink size={14} />}
                        onClick={() => assign.mutate({ id: offer.id, action: "ignore" }, { onError: fail })}>

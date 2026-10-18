@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     timezone: str = "Europe/Bratislava"
     frontend_dist: Path = BACKEND_DIR.parent / "frontend" / "dist"
 
+    # --- scraping and job processing ---
+    # Run the job worker as a background thread of the web process (one Railway service on the Free plan).
+    embedded_worker: bool = True
+    worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60)
+    job_lease_seconds: int = Field(default=600, ge=60)  # a running job older than this is considered abandoned
+    scraper_user_agent: str = "CompetitionChecker/1.0 (price monitoring)"
+    scraper_max_bytes: int = Field(default=5 * 1024 * 1024, ge=64 * 1024)
+    robots_cache_seconds: int = Field(default=6 * 3600, ge=60)
+    # Browser tests only: hosts ending in ".e2e.test" are served from this local origin. Refused in production.
+    scraper_test_origin: str | None = None
+
     @property
     def is_production(self) -> bool:
         return bool(self.railway_environment)
@@ -46,6 +57,8 @@ class Settings(BaseSettings):
     def require_secret_in_production(self) -> "Settings":
         if self.is_production and (self.secret_key == DEV_SECRET_KEY or len(self.secret_key) < 32):
             raise ValueError("SECRET_KEY must be set to a random string of at least 32 characters in production")
+        if self.is_production and self.scraper_test_origin:
+            raise ValueError("SCRAPER_TEST_ORIGIN is for browser tests only and must not be set in production")
         return self
 
 

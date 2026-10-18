@@ -1,15 +1,24 @@
 import {
-  Alert, Badge, Button, Divider, Group, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput, Tooltip,
+  Alert, Badge, Button, Divider, Group, NumberInput, Select, SimpleGrid, Stack, Switch, Text, TextInput,
 } from "@mantine/core";
+import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
 import { IconFlask } from "@tabler/icons-react";
 import { useEffect, useState, type FormEvent } from "react";
 
 import {
-  useUpdateScrapeConfig, type ParserType, type ScrapeConfig, type ScrapeConfigInput, type SourceType, type VatMode,
+  useUpdateScrapeConfig, type ScrapeConfig, type ScrapeConfigInput, type SourceType, type VatMode,
 } from "../../api/competitors";
+import { useParsers } from "../../api/jobs";
+import { useOffers } from "../../api/offers";
 import { formatDateTime } from "../../format";
-import { CSS_FIELDS, PARSER_LABELS, SOURCE_LABELS, VAT_LABELS } from "./labels";
+import { CSS_FIELDS, SOURCE_LABELS, VAT_LABELS } from "./labels";
+import { TestCheckModal } from "./TestCheckModal";
+
+const XPATH_PLACEHOLDERS: Record<string, string> = {
+  price: "//span[@class='price']", name: "//h1", original_price: "//del", currency: "//meta[@itemprop='priceCurrency']/@content",
+  availability: "//*[contains(@class,'stock')]", identifier: "//*[@itemprop='gtin13']/@content",
+};
 
 function toInput(config: ScrapeConfig): ScrapeConfigInput {
   const { source_type, parser_type, parser_config, timeout_seconds, max_concurrency, max_retries,
@@ -21,23 +30,29 @@ function toInput(config: ScrapeConfig): ScrapeConfigInput {
 const entries = <T extends string>(labels: Record<T, string>) =>
   (Object.entries(labels) as [T, string][]).map(([value, label]) => ({ value, label }));
 
-export function ScrapeConfigForm({ competitorId, config, readOnly }: {
-  competitorId: number; config: ScrapeConfig; readOnly: boolean;
+export function ScrapeConfigForm({ competitorId, baseUrl, config, readOnly }: {
+  competitorId: number; baseUrl: string; config: ScrapeConfig; readOnly: boolean;
 }) {
   const save = useUpdateScrapeConfig(competitorId);
+  const parsers = useParsers();
+  const firstOffer = useOffers({ page_size: 1 }, competitorId);
+  const [testOpened, test] = useDisclosure();
   const [form, setForm] = useState<ScrapeConfigInput>(() => toInput(config));
   useEffect(() => setForm(toInput(config)), [config]);
 
+  const parser = parsers.data?.find((p) => p.name === form.parser_type);
+  const kind = parser?.config_kind ?? "none";
+  const dirty = JSON.stringify(form) !== JSON.stringify(toInput(config));
+
   const set = <K extends keyof ScrapeConfigInput>(key: K, value: ScrapeConfigInput[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
-  const setSelector = (key: string, value: string) =>
+  const setExpression = (key: string, value: string) =>
     setForm((f) => ({ ...f, parser_config: { ...f.parser_config, [key]: value } }));
 
   function submit(event: FormEvent) {
     event.preventDefault();
-    const parser_config = form.parser_type === "css"
-      ? Object.fromEntries(Object.entries(form.parser_config).filter(([, v]) => v && v.trim()))
-      : {};
+    const parser_config = kind === "none" ? {}
+      : Object.fromEntries(Object.entries(form.parser_config).filter(([, v]) => v && v.trim()));
     save.mutate({ ...form, parser_config }, {
       onSuccess: () => notifications.show({ color: "green", message: "Nastavenia scrapingu boli uložené." }),
     });
@@ -50,10 +65,11 @@ export function ScrapeConfigForm({ competitorId, config, readOnly }: {
     <form onSubmit={submit}>
       <Stack>
         <Group gap="xs">
-          <Badge variant="light">Verzia parsera {config.parser_version}</Badge>
+          <Badge variant="light">Verzia nastavenia parsera {config.parser_version}</Badge>
           <Badge variant="light" color={config.last_test_status === "succeeded" ? "green"
             : config.last_test_status ? "red" : "gray"}>
-            Posledný test: {config.last_test_status ? `${config.last_test_status}, ${formatDateTime(config.last_test_at)}`
+            Posledný test: {config.last_test_status
+              ? `${config.last_test_status === "succeeded" ? "úspešný" : "neúspešný"}, ${formatDateTime(config.last_test_at)}`
               : "zatiaľ nebol"}
           </Badge>
         </Group>
@@ -61,20 +77,22 @@ export function ScrapeConfigForm({ competitorId, config, readOnly }: {
         <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <Select label="Zdroj dát" data={entries(SOURCE_LABELS)} value={form.source_type} allowDeselect={false}
                   disabled={readOnly} onChange={(v) => v && set("source_type", v as SourceType)} />
-          <Select label="Parser" allowDeselect={false} disabled={readOnly} value={form.parser_type}
-                  description={PARSER_LABELS[form.parser_type].description}
-                  data={(Object.keys(PARSER_LABELS) as ParserType[]).map((p) => ({ value: p, label: PARSER_LABELS[p].label }))}
-                  onChange={(v) => v && set("parser_type", v as ParserType)} />
+          <Select label="Parser" allowDeselect={false} disabled={readOnly || !parsers.data} value={form.parser_type}
+                  description={parser ? `${parser.description} (verzia ${parser.version})` : undefined}
+                  data={(parsers.data ?? []).map((p) => ({ value: p.name, label: p.label }))}
+                  onChange={(v) => v && set("parser_type", v)} />
         </SimpleGrid>
 
-        {form.parser_type === "css" && (
+        {kind !== "none" && (
           <>
-            <Divider label="CSS selektory na produktovej stránke" labelPosition="left" />
+            <Divider label={kind === "css" ? "CSS selektory na produktovej stránke" : "XPath výrazy na produktovej stránke"}
+                     labelPosition="left" />
             <SimpleGrid cols={{ base: 1, sm: 2 }}>
               {CSS_FIELDS.map((f) => (
-                <TextInput key={f.key} label={f.label} placeholder={f.placeholder} required={f.key === "price"}
-                           disabled={readOnly} value={form.parser_config[f.key] ?? ""} maxLength={500}
-                           ff="monospace" onChange={(e) => setSelector(f.key, e.currentTarget.value)} />
+                <TextInput key={f.key} label={f.label} required={f.key === "price"} disabled={readOnly} maxLength={500}
+                           placeholder={kind === "css" ? f.placeholder : XPATH_PLACEHOLDERS[f.key]} ff="monospace"
+                           value={form.parser_config[f.key] ?? ""}
+                           onChange={(e) => setExpression(f.key, e.currentTarget.value)} />
               ))}
             </SimpleGrid>
           </>
@@ -99,13 +117,19 @@ export function ScrapeConfigForm({ competitorId, config, readOnly }: {
         </SimpleGrid>
 
         <Group justify="space-between">
-          <Tooltip label="Testovacia kontrola bude dostupná v etape 4 (scraping)">
-            <Button variant="default" leftSection={<IconFlask size={16} />} disabled>Testovacia kontrola</Button>
-          </Tooltip>
+          {!readOnly ? (
+            <Button variant="default" leftSection={<IconFlask size={16} />} onClick={test.open} disabled={dirty}
+                    title={dirty ? "Najprv uložte zmeny, test použije uložené nastavenia." : undefined}>
+              Testovacia kontrola
+            </Button>
+          ) : <span />}
           {!readOnly && <Button type="submit" loading={save.isPending}>Uložiť nastavenia</Button>}
         </Group>
+        {dirty && !readOnly && <Text size="xs" c="dimmed">Testovacia kontrola používa uložené nastavenia, najprv ich uložte.</Text>}
         {readOnly && <Text size="sm" c="dimmed">Nastavenia môže meniť iba administrátor.</Text>}
       </Stack>
+      <TestCheckModal opened={testOpened} onClose={test.close} competitorId={competitorId}
+                      defaultUrl={firstOffer.data?.items[0]?.product_url ?? baseUrl} />
     </form>
   );
 }

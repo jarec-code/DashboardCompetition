@@ -331,7 +331,14 @@ nejednoznačné prípady → `pending_review`; manuálne priradenie má prednos�
 
 ---
 
-### Etapa 4: Scraping, aktuálne ceny a cenová história
+### Etapa 4: Scraping, aktuálne ceny a cenová história ✅ kód hotový 18. 10. 2026
+
+**Stav:**
+- **Vytvorené:** `scraping/urlsafety.py` (SSRF: DNS rezolúcia, všetky neverejné IPv4/IPv6 rozsahy vrátane 169.254.169.254 a IPv4-mapped adries), `scraping/fetcher.py` (httpx bez automatických presmerovaní, kontrola každého presmerovania a skutočnej IP po pripojení, max. 5 presmerovaní, limit 5 MB, iba textový obsah, kódovanie z hlavičky alebo `<meta charset>`, ETag/Last-Modified, rozlíšenie dočasných a trvalých chýb, 429 s Retry-After, rozpoznanie Cloudflare výzvy bez obchádzania, robots.txt s cache), register parserov (`auto`, `jsonld`, `microdata`, `opengraph`, `css`, `xpath`, `alter_cz`) s verziami a vlastnou validáciou nastavení, `services/pricing.py` (história iba pri skutočnej zmene, chyba neprepíše platnú cenu, neaktuálnosť pri 2× intervale), fronta úloh v PostgreSQL (`worker/queue.py`: bez duplicít, SKIP LOCKED, obnova po páde, strop pokusov), `worker/processor.py` (pozastavený konkurent sa automaticky nespracuje, ručná kontrola áno; rozostup požiadaviek na doménu; po úspechu automatické párovanie), worker ako vlákno web procesu (`EMBEDDED_WORKER=true`) alebo samostatný proces `python -m app.worker`, API `POST /offers/{id}/check`, `POST /competitors/{id}/test`, `GET /jobs/{id}`, `GET /parsers`, `GET /offers/{id}/history`, `docs/SCRAPER_GUIDE.md`.
+- **UI:** Skontrolovať teraz (UI sleduje stav úlohy a ohlási výsledok so zmenou), Testovacia kontrola s výsledkom extrakcie, parsery z API (nový parser sa zobrazí bez zmeny frontendu), XPath polia, História zmien ponuky.
+- **Testy (skutočný výstup):** backend 174 passed (59 nových: SSRF, fetcher, parsery na uložených stránkach alter.cz, normalizácia, pravidlá histórie, worker end-to-end, 429, pozastavený a archivovaný konkurent, SKIP LOCKED, obnova po reštarte), Vitest 3 passed, Playwright e2e 16 passed (5 nových proti lokálnemu falošnému obchodu so stránkami alter.cz).
+- **Rozdiel oproti plánu:** ručné a testovacie kontroly sa pri chybe neopakujú (používateľ vidí chybu hneď); opakovanie s exponenciálnym oneskorením pre plánované kontroly príde v etape 5. Podmienené požiadavky (ETag) sa už posielajú pri plánovaných kontrolách.
+- **Zistenie:** ID vo výpise katalógu alter.cz (`/cart/add_dialog/<id>`) nie je ID produktovej stránky (`/produkt/<id>`); URL ponúk treba brať z produktových stránok.
 
 **Cieľ:** spoľahlivé získanie ceny jednej ponuky a správny zápis histórie. Manuálna a testovacia
 kontrola beží cez frontu úloh a worker (zatiaľ bez automatického plánovania).

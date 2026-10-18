@@ -9,6 +9,7 @@ import { useProducts, type Product } from "../../api/products";
 import { useIsAdmin } from "../../auth/auth";
 import { DataTable, type Column } from "../../components/DataTable";
 import { formatMoney } from "../../format";
+import { HistoryModal } from "../offers/HistoryModal";
 import { AssignModal } from "../offers/AssignModal";
 import { OfferActions, OfferMatchCell, OfferPriceCell, OfferUrlCell } from "../offers/OfferCells";
 import { ImportModal } from "./ImportModal";
@@ -107,6 +108,7 @@ function MatchingQueue() {
   const [status, setStatus] = useState("pending_review");
   const [page, setPage] = useState(1);
   const [assigning, setAssigning] = useState<Offer | null>(null);
+  const [history, setHistory] = useState<Offer | null>(null);
   const offers = useOffers({ match_status: status, page, page_size: PAGE_SIZE });
 
   const columns: Column<Offer>[] = [
@@ -117,7 +119,7 @@ function MatchingQueue() {
     { key: "price", label: "Cena", render: (o) => <OfferPriceCell offer={o} /> },
     { key: "match", label: "Stav párovania", render: (o) => <OfferMatchCell offer={o} /> },
     ...(isAdmin ? [{ key: "actions", label: "", align: "right" as const,
-                     render: (o: Offer) => <OfferActions offer={o} onAssign={setAssigning} /> }] : []),
+                     render: (o: Offer) => <OfferActions offer={o} onAssign={setAssigning} onHistory={setHistory} /> }] : []),
   ];
 
   return (
@@ -134,6 +136,7 @@ function MatchingQueue() {
                  pageSize={PAGE_SIZE} onPageChange={setPage} loading={offers.isLoading} error={offers.error}
                  emptyText="Žiadne ponuky v tomto stave." />
       <AssignModal offer={assigning} onClose={() => setAssigning(null)} />
+      <HistoryModal offer={history} onClose={() => setHistory(null)} />
     </Stack>
   );
 }
