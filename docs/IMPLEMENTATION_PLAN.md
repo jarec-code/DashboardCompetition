@@ -236,7 +236,13 @@ Každá etapa obsahuje aj vlastné testy a nasadenie. Etapa 9 nie je jediné mie
 
 ---
 
-### Etapa 1: Základ aplikácie
+### Etapa 1: Základ aplikácie (kód hotový 18. 10. 2026, čaká na nasadenie)
+
+**Stav:**
+- **Vytvorené:** `backend/` (FastAPI, SQLAlchemy, Alembic migrácia `0001` so všetkými tabuľkami jadra, prihlásenie so session cookie + CSRF, roly, obmedzenie neúspešných prihlásení, správa používateľov, `/healthz`, `/readyz`, CLI `predeploy`), `frontend/` (React + TS + Mantine: prihlásenie, navigácia so 7 sekciami, Nastavenia so správou používateľov, ostatné sekcie „Pripravuje sa“), `deploy/Dockerfile`, `railway/web.json`, `.env.example`, `.github/workflows/ci.yml`.
+- **Testy (lokálne, skutočný výstup):** backend 45 passed (pytest proti PostgreSQL 16), ruff bez chýb; frontend 3 passed (Vitest), `tsc` bez chýb, produkčný build OK; ručne cez curl na uvicorn: migrácia, vytvorenie admina, prihlásenie, `/api/auth/me`, `/api/users`, servírovanie React aplikácie.
+- **Neoverené:** zostavenie Docker image (lokálne nie je Docker, overí sa až buildom na Railway), beh CI na GitHube, vzhľad UI v prehliadači.
+- **Presunuté do etapy 2:** spoločný komponent tabuľky so stránkovaním, triedením a filtrami (bez dát by nebol otestovateľný) a e2e testy UI v Playwright.
 
 **Cieľ:** nasaditeľná kostra s databázou, migráciami, prihlásením a navigáciou.
 
@@ -464,7 +470,7 @@ Plán schválený 18. 10. 2026.
 | # | Otázka | Rozhodnutie |
 |---|---|---|
 | R1 | Frontend | **React + TypeScript.** |
-| R2 | Služby na Railway | **Otvorené, závisí od plánu Railway (kap. 6.2).** Kód podporí oba režimy: samostatný worker aj worker zabudovaný vo web procese (`EMBEDDED_WORKER=true`). |
+| R2 | Služby na Railway | **Free plán, worker zabudovaný vo web procese** (`EMBEDDED_WORKER=true`, od etapy 4). Služby: stará aplikácia, nová `web`, PostgreSQL = 3 (limit Free plánu). Samostatný worker zostáva v kóde pre neskorší prechod na Hobby. |
 | R3 | Vlastné ceny podľa trhu | Áno, `product_prices` (odporúčanie, nenamietané). |
 | R4 | Roly | admin a viewer (odporúčanie, nenamietané). |
 | R5 | Prvý konkurent | **alter.cz.** Požiadavky iba postupne, s rozostupom (kap. 6.1). |
@@ -512,7 +518,7 @@ Spotreba sa účtuje za skutočne použité zdroje: RAM približne $10 za GB-mes
 Spolu cca $3–4 / mesiac. **Free plán ($1 kredit) to nepokryje**, Hobby plán ($5 s kreditom $5) áno.
 
 - **Hobby:** web + worker + PostgreSQL ako samostatné služby (pôvodné odporúčanie).
-- **Free (iba na skúšku):** web so zabudovaným workerom + PostgreSQL = 2 služby. Kredit $1 sa pravdepodobne minie v priebehu mesiaca a služby sa zastavia. Stará aplikácia sa nedá prevádzkovať súbežne s novou (limit 3 služieb), preto by sa prechod spravil hneď v etape 1 namiesto etapy 6.
+- **Free (zvolené):** web so zabudovaným workerom + PostgreSQL = 2 služby, spolu so starou aplikáciou 3 (presne limit). Kredit $1 sa pravdepodobne minie v priebehu mesiaca a služby sa zastavia; spotrebu sledovať v Railway → Usage. Po vypnutí starej aplikácie (etapa 6) klesne spotreba približne o tretinu.
 
 ---
 

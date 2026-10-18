@@ -1,9 +1,55 @@
 # Competition Checker
 
-A small local web app that pulls product names and prices from competitor websites
-and compares them with your own prices.
+Price monitoring of competitor e-shops. The repository currently holds two applications:
 
-## Run
+- **New application** (`backend/`, `frontend/`): FastAPI + PostgreSQL + React, built in stages
+  according to [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md). Stage 1 (foundation, login) is done.
+- **Old application** (`app.py`, Flask + SQLite): stays in service until the new one replaces it (stage 6).
+
+## New application
+
+### Local development
+
+Requirements: Python 3.12, Node.js 24, PostgreSQL 16 (`brew install python@3.12 node postgresql@16`).
+
+```bash
+createdb competition && createdb competition_test
+cp .env.example .env                      # adjust if your database URL differs
+
+cd backend
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m app.cli migrate
+.venv/bin/python -m app.cli create-admin --email you@example.com   # asks for a password (min. 10 chars)
+.venv/bin/uvicorn app.main:app --reload --port 8000
+
+cd ../frontend
+npm install
+npm run dev                               # http://localhost:5173 (proxies /api to port 8000)
+```
+
+Tests: `cd backend && .venv/bin/pytest` (uses the `competition_test` database, or `TEST_DATABASE_URL`)
+and `cd frontend && npm test`. New migration after changing models:
+`.venv/bin/alembic revision --autogenerate -m "description"`, then review the generated file.
+
+### Deploy on Railway
+
+The new application is a separate Railway service built from `deploy/Dockerfile`.
+
+1. In the Railway project add **PostgreSQL** (*New → Database → PostgreSQL*).
+2. Add a service from the GitHub repository (*New → GitHub Repo*). In its *Settings*, set the
+   **config file path** to `/railway/web.json`.
+3. In the service's *Variables*:
+   - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference to the database service),
+   - `SECRET_KEY` = random string of 48+ characters (`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
+   - `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the first administrator.
+4. *Settings → Networking → Generate Domain*, target port **8080**.
+
+Each deploy runs `python -m app.cli predeploy` first: database migrations, then creates the first
+administrator if none exists. Health check: `/readyz` (returns 503 when the database is unreachable).
+
+## Old application
+
+### Run
 
 ```bash
 python3 -m venv .venv
@@ -13,7 +59,7 @@ python3 -m venv .venv
 
 Open http://localhost:5050 (set `PORT` to use another port; avoid 5000 on macOS, where AirPlay Receiver uses it).
 
-## Deploy on Railway
+### Deploy on Railway (old application)
 
 `railway.json` makes Railway start the app with gunicorn; `gunicorn.conf.py` binds it to `0.0.0.0:$PORT`.
 The deploy log prints `Competition Checker listening on 0.0.0.0:<port>`. The public domain's target port
@@ -28,7 +74,7 @@ The deploy log prints `Competition Checker listening on 0.0.0.0:<port>`. The pub
 
 The browser asks for the username and password (HTTP Basic Auth). `/healthz` stays open for Railway's health check.
 
-## How to use
+### How to use
 
 1. **Our products**: add products by hand, or import a CSV with the columns `name`, `price` and optionally `sku` and `currency`.
 2. **Competitors**: add a competitor with one or more page URLs (category/listing pages or single product pages). The app scrapes them straight away.
@@ -37,7 +83,7 @@ The browser asks for the username and password (HTTP Basic Auth). `/healthz` sta
 3. **Comparison**: each of your products is matched by name to the most similar competitor product and shown with its price difference in %. Red means the competitor is cheaper. If a match is wrong, fix it on the competitor's page (pick a product or *Ignore*). Manual matches are kept when you re-scrape.
 4. Use **Refresh all competitors** to scrape again and **Export CSV** to download the table.
 
-## Notes
+### Notes
 
 - Data is stored in `competition.db` (SQLite). Set `COMPETITION_DB` to use a different path.
 - The app follows `robots.txt` and fetches one page per URL. Pages that build their product list with JavaScript only may need the CSS-selector option, or may not work at all.
