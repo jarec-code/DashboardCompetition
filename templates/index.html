@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>Price comparison</h1>
+  <div>
+    <form method="post" action="{{ url_for('scrape_all') }}" class="inline">
+      <button>Refresh all competitors</button>
+    </form>
+    <a class="button secondary" href="{{ url_for('export_csv') }}">Export CSV</a>
+  </div>
+</div>
+
+<div class="stats">
+  <div><span>{{ summary.total }}</span>our products</div>
+  <div class="good"><span>{{ summary.we_cheapest }}</span>we are cheapest</div>
+  <div class="bad"><span>{{ summary.undercut }}</span>a competitor is cheaper</div>
+  <div><span>{{ summary.unmatched }}</span>no competitor match</div>
+</div>
+
+{% if not rows %}
+  <p class="empty">Add <a href="{{ url_for('products') }}">your products</a> and
+    <a href="{{ url_for('competitors') }}">competitor websites</a> to see a comparison.</p>
+{% else %}
+<div class="scroll">
+<table>
+  <thead>
+    <tr>
+      <th>Our product</th>
+      <th class="num">Our price</th>
+      {% for c in competitors %}<th><a href="{{ url_for('competitor_detail', cid=c.id) }}">{{ c.name }}</a></th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.product.name }}{% if r.product.sku %} <small class="muted">{{ r.product.sku }}</small>{% endif %}</td>
+      <td class="num {{ 'best' if r.cheapest == 'us' and r.cells.values()|select|list }}">{{ r.product.price|money(r.product.currency) }}</td>
+      {% for c in competitors %}
+        {% set cell = r.cells.get(c.id) %}
+        {% if cell %}
+          <td class="num {{ 'best' if r.cheapest == c.id }}">
+            <a href="{{ cell.cp.url }}" target="_blank" rel="noopener" title="{{ cell.cp.name }} (match {{ '%.0f'|format(cell.score * 100) }}%{{ ', manual' if cell.manual }})">
+              {{ cell.cp.price|money(cell.cp.currency) }}</a>
+            {% if cell.diff_pct is not none %}
+              <div class="diff {{ 'bad' if cell.diff < 0 else 'good' if cell.diff > 0 }}">
+                {{ '%+.1f'|format(cell.diff_pct) }}%
+              </div>
+            {% endif %}
+            {% if cell.currency_mismatch %}<div class="warn">currency differs</div>{% endif %}
+            <small class="muted matchname">{{ cell.cp.name }}</small>
+          </td>
+        {% else %}
+          <td class="muted center">—</td>
+        {% endif %}
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted legend">Percent = competitor price vs. ours. <span class="bad">Red</span> = competitor is cheaper,
+  <span class="good">green</span> = we are cheaper. Highlighted cell = lowest price. Fix wrong matches on a competitor's page.</p>
+{% endif %}
+{% endblock %}

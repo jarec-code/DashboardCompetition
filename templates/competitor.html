@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="toolbar">
+  <h1>{{ comp.name }}</h1>
+  <form method="post" action="{{ url_for('scrape', cid=comp.id) }}" class="inline"><button>Scrape now</button></form>
+</div>
+<p class="muted">Last scraped: {{ (comp.last_scraped or 'never').replace('T', ' ') }} — {{ comp.last_status or '' }}</p>
+
+<details class="card">
+  <summary>Settings</summary>
+  <form method="post" action="{{ url_for('update_competitor', cid=comp.id) }}">
+    <label>Name <input name="name" value="{{ comp.name }}" required></label>
+    <label>Page URLs (one per line) <textarea name="urls" rows="3" required>{{ comp.urls }}</textarea></label>
+    <div class="row">
+      <label>Product card selector <input name="item_selector" value="{{ comp.item_selector or '' }}"></label>
+      <label>Name selector <input name="name_selector" value="{{ comp.name_selector or '' }}"></label>
+      <label>Price selector <input name="price_selector" value="{{ comp.price_selector or '' }}"></label>
+    </div>
+    <button>Save</button>
+  </form>
+</details>
+
+<h2>Scraped products ({{ products|length }})</h2>
+{% if products %}
+<table>
+  <thead><tr><th>Competitor product</th><th class="num">Price</th><th>Matched to our product</th><th class="num">Our price</th></tr></thead>
+  <tbody>
+  {% for cp in products %}
+    {% set m = matches.get(cp.id) %}
+    {% set our = ours_by_id.get(m[0]) if m else none %}
+    <tr>
+      <td><a href="{{ cp.url }}" target="_blank" rel="noopener">{{ cp.name }}</a></td>
+      <td class="num">{{ cp.price|money(cp.currency) }}</td>
+      <td>
+        <form method="post" action="{{ url_for('link') }}" class="inline">
+          <input type="hidden" name="cp_id" value="{{ cp.id }}">
+          {% set current = links[cp.id] if cp.id in links else 'auto' %}
+          <select name="our_id" onchange="this.form.submit()">
+            <option value="auto" {{ 'selected' if current == 'auto' }}>
+              Auto{% if m and not m[2] %}: {{ our.name }} ({{ '%.0f'|format(m[1] * 100) }}%){% elif current == 'auto' %}: no match{% endif %}</option>
+            <option value="none" {{ 'selected' if cp.id in links and links[cp.id] is none }}>Ignore (never match)</option>
+            {% for o in ours %}
+              <option value="{{ o.id }}" {{ 'selected' if current == o.id }}>{{ o.name }}</option>
+            {% endfor %}
+          </select>
+        </form>
+      </td>
+      <td class="num">
+        {% if our %}{{ our.price|money(our.currency) }}
+          {% if cp.price is not none %}
+            <span class="diff {{ 'bad' if cp.price < our.price else 'good' if cp.price > our.price }}">
+              {{ '%+.1f'|format((cp.price - our.price) / our.price * 100) }}%</span>
+          {% endif %}
+        {% else %}—{% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+  <p class="empty">No products scraped yet. If scraping finds nothing, set CSS selectors under Settings.</p>
+{% endif %}
+{% endblock %}
