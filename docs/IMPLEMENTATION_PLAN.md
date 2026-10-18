@@ -275,7 +275,13 @@ repozitára s cestou ku konfigurácii `railway/web.json`; nastaviť `SECRET_KEY`
 
 ---
 
-### Etapa 2: Evidencia konkurencie
+### Etapa 2: Evidencia konkurencie ✅ kód hotový 18. 10. 2026
+
+**Stav:**
+- **Vytvorené:** API `/api/competitors` (zoznam s vyhľadávaním, filtrom stavu a krajiny, triedením podľa všetkých stĺpcov a stránkovaním; detail; vytvorenie; čiastočná úprava; zmena stavu; nastavenia scrapingu `PUT …/scrape-config`; behy `…/runs`; mazanie iba bez dát), validácia a normalizácia URL (`services/urls.py`), kontrola duplicitnej domény s povinným dôvodom, validácia `parser_config` (parsery `auto`, `jsonld`, `microdata`, `opengraph`, `css`; CSS selektory sa kompilujú, neznáme kľúče odmietnuté), automatické zvýšenie `parser_version` pri zmene parsera.
+- **UI:** spoločný komponent `DataTable` (triedenie, stránkovanie), zoznam konkurentov so stavom filtrov v URL, formulár (vytvorenie/úprava, upozornenie na duplicitnú doménu s odkazom), detail so sekciami Základné údaje, Sledované produkty, Nastavenia scrapingu, Monitoring; pozastavenie, aktivácia a archivácia s potvrdením.
+- **Testy (skutočný výstup):** backend 79 passed (z toho 32 nových: URL, CRUD, duplicity, stavy bez straty dát, filtre, triedenie, stránkovanie, escapovanie LIKE, validácia parsera, oprávnenia), frontend Vitest 3 passed, **Playwright e2e 7 passed** (pridanie, úprava, duplicitná doména, vyhľadávanie a filter, pozastavenie a archivácia, CSS parser, čitateľ bez úprav). UI skontrolované na snímkach (desktop 1280 px, mobil 390 px).
+- **Neimplementované v tejto etape (podľa plánu neskôr):** testovacia kontrola (etapa 4), prepočet `next_check_at` pri zmene frekvencie (etapa 5, keď existuje scheduler), XPath a parsery pre konkrétne weby (etapa 4), zoznam ponúk konkurenta (etapa 3).
 
 **Cieľ:** kompletná správa konkurentov cez UI.
 

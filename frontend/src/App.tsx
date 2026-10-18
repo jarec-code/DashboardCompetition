@@ -5,11 +5,14 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useSession } from "./auth/auth";
 import { AppLayout } from "./layout/AppLayout";
 import { NAV_ITEMS } from "./layout/navigation";
+import { CompetitorDetailPage } from "./pages/competitors/CompetitorDetailPage";
+import { CompetitorsPage } from "./pages/competitors/CompetitorsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 const IMPLEMENTED: Record<string, ReactNode> = {
+  "/konkurencia": <CompetitorsPage />,
   "/nastavenia": <SettingsPage />,
 };
 
@@ -42,6 +45,7 @@ export function App() {
           <Route key={item.path} path={item.path}
                  element={IMPLEMENTED[item.path] ?? <PlaceholderPage item={item} />} />
         ))}
+        <Route path="/konkurencia/:id" element={<CompetitorDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

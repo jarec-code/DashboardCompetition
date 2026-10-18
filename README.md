@@ -28,7 +28,8 @@ npm run dev                               # http://localhost:5173 (proxies /api 
 ```
 
 Tests: `cd backend && .venv/bin/pytest` (uses the `competition_test` database, or `TEST_DATABASE_URL`)
-and `cd frontend && npm test`. New migration after changing models:
+and `cd frontend && npm test`. Browser tests: `createdb competition_e2e`, `npx playwright install chromium` once,
+then `cd frontend && npm run build && npm run e2e` (starts its own server on port 8010 with a fresh e2e database). New migration after changing models:
 `.venv/bin/alembic revision --autogenerate -m "description"`, then review the generated file.
 
 ### Deploy on Railway

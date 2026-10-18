@@ -27,6 +27,10 @@ export function useSession() {
   });
 }
 
+export function useIsAdmin(): boolean {
+  return useSession().data?.user.role === "admin";
+}
+
 export function useLogin() {
   const queryClient = useQueryClient();
   return useMutation({
