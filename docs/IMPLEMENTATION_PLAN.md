@@ -236,7 +236,13 @@ Každá etapa obsahuje aj vlastné testy a nasadenie. Etapa 9 nie je jediné mie
 
 ---
 
-### Etapa 1: Základ aplikácie (kód hotový 18. 10. 2026, čaká na nasadenie)
+### Etapa 1: Základ aplikácie ✅ nasadené 18. 10. 2026
+
+**Nasadenie (overené na https://dashboardcompetition-production.up.railway.app):**
+- Existujúca služba `DashboardCompetition` bola prepnutá na novú aplikáciu (stará Flask aplikácia sa už nenasadzuje). Pridaný PostgreSQL (`Postgres-Gcn3`), `DATABASE_URL` odkazuje naň.
+- Docker build z `deploy/Dockerfile` prešiel. Railway `preDeployCommand` sa nespustil, preto migrácie a prvý admin bežia pri štarte kontajnera pod pg advisory lockom.
+- Overené: `/readyz` 200, React aplikácia sa načíta, prihlásenie (zlé heslo 401, správne 200), zoznam používateľov, `Secure` cookie, CSRF pri odhlásení, HSTS a ďalšie bezpečnostné hlavičky, API dokumentácia v produkcii vypnutá.
+- **Automatický deploy z GitHubu sa nespúšťa**; nasadzuje sa cez `railway redeploy --service DashboardCompetition --from-source`. Treba skontrolovať Settings → Source (prípadne „Wait for CI“).
 
 **Stav:**
 - **Vytvorené:** `backend/` (FastAPI, SQLAlchemy, Alembic migrácia `0001` so všetkými tabuľkami jadra, prihlásenie so session cookie + CSRF, roly, obmedzenie neúspešných prihlásení, správa používateľov, `/healthz`, `/readyz`, CLI `predeploy`), `frontend/` (React + TS + Mantine: prihlásenie, navigácia so 7 sekciami, Nastavenia so správou používateľov, ostatné sekcie „Pripravuje sa“), `deploy/Dockerfile`, `railway/web.json`, `.env.example`, `.github/workflows/ci.yml`.
