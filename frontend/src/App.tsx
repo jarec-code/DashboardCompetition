@@ -12,10 +12,12 @@ import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { ProductDetailPage } from "./pages/products/ProductDetailPage";
 import { ProductsPage } from "./pages/products/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { UpdatesPage } from "./pages/updates/UpdatesPage";
 
 const IMPLEMENTED: Record<string, ReactNode> = {
   "/konkurencia": <CompetitorsPage />,
   "/produkty": <ProductsPage />,
+  "/aktualizacie": <UpdatesPage />,
   "/nastavenia": <SettingsPage />,
 };
 

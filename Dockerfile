@@ -1,6 +1,5 @@
-# Image for the new application (web; later also the worker). Build context: repository root.
-# Kept outside the repository root on purpose: a root Dockerfile would also be picked up by the
-# old Flask service on Railway and break it.
+# Image of the application (web + embedded worker; `python -m app.worker` for a separate worker service).
+# Railway detects this root Dockerfile on its own, even without railway.json.
 
 FROM node:24-slim AS frontend
 WORKDIR /build

@@ -3,6 +3,7 @@ import { useDisclosure } from "@mantine/hooks";
 import { IconLogout } from "@tabler/icons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
+import { useMonitoring } from "../api/monitoring";
 import { useLogout, useSession } from "../auth/auth";
 import { NAV_ITEMS } from "./navigation";
 
@@ -13,6 +14,8 @@ export function AppLayout() {
   const { data: session } = useSession();
   const logout = useLogout();
   const location = useLocation();
+  const monitoring = useMonitoring(60);
+  const problems = (monitoring.data?.problem_competitors?.length ?? 0) + (monitoring.data?.problem_offers?.length ?? 0);
 
   return (
     <AppShell header={{ height: 56 }} navbar={{ width: 240, breakpoint: "sm", collapsed: { mobile: !opened } }}
@@ -42,7 +45,10 @@ export function AppLayout() {
             const active = item.path === "/" ? location.pathname === "/" : location.pathname.startsWith(item.path);
             return (
               <NavLink key={item.path} component={Link} to={item.path} label={item.label} active={active}
-                       leftSection={<item.icon size={18} stroke={1.6} />} onClick={close} />
+                       leftSection={<item.icon size={18} stroke={1.6} />} onClick={close}
+                       rightSection={item.path === "/aktualizacie" && problems > 0
+                         ? <Badge size="xs" color="red" circle aria-label={`${problems} problémov`}>{problems}</Badge>
+                         : undefined} />
             );
           })}
         </Stack>

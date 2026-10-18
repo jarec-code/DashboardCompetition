@@ -10,6 +10,7 @@ import { useState, type FormEvent } from "react";
 import { api } from "../api/client";
 import type { Role, User } from "../api/types";
 import { useSession } from "../auth/auth";
+import { SchedulingSettingsSection } from "./SchedulingSettings";
 
 const USERS_KEY = ["users"] as const;
 const ROLE_OPTIONS = [
@@ -131,10 +132,7 @@ export function SettingsPage() {
           <Text>Prihlásený ako {session.user.email}. Nastavenia môže meniť iba administrátor.</Text>
         </Paper>
       )}
-      <Paper withBorder p="md" radius="md">
-        <Title order={2} size="h4" mb={4}>Intervaly aktualizácií a limity</Title>
-        <Text c="dimmed" size="sm">Budú dostupné po dokončení etapy 5 implementačného plánu.</Text>
-      </Paper>
+      <SchedulingSettingsSection readOnly={session.user.role !== "admin"} />
     </Stack>
   );
 }

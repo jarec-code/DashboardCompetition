@@ -1,7 +1,8 @@
 """Processing of one scrape job: fetch, parse, record, match. Never raises; outcomes go to the job row."""
 import logging
+import random
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
@@ -15,6 +16,8 @@ from app.services import matching, pricing
 from app.worker import queue
 
 log = logging.getLogger("worker")
+RETRY_BASE_SECONDS = 60       # 1st retry after ~1 min, then 2, 4, 8 … minutes
+RETRY_MAX_SECONDS = 3600
 
 
 class Skip(Exception):
@@ -45,39 +48,50 @@ class Processor:
     def process(self, db: Session, job: ScrapeJob) -> None:
         competitor = db.get(Competitor, job.competitor_id)
         offer = db.get(CompetitorProduct, job.competitor_product_id) if job.competitor_product_id else None
-        run = None
         try:
             self._check_allowed(job, competitor, offer)
-            if job.kind == "manual":
-                run = ScrapeRun(competitor_id=competitor.id, status="running", total_count=1)
+            if job.kind == "manual" and job.run_id is None:
+                run = ScrapeRun(competitor_id=competitor.id, trigger="manual", status="running", total_count=1)
                 db.add(run)
                 db.flush()
                 job.run_id = run.id
             result = self._scrape(db, job, competitor, offer)
             queue.finish(db, job, "succeeded", result=result)
-            self._finish_run(run, success=True, changed=bool(result.get("change_types")))
+            queue.account_run(db, job, success=True, changed=bool(result.get("change_types")))
             if job.kind == "test":
                 self._test_status(competitor, "succeeded")
         except Skip as exc:
             queue.finish(db, job, "cancelled", error=str(exc), error_kind="permanent")
+            queue.account_run(db, job, success=None)
         except (FetchError, ParseError) as exc:
             kind = exc.kind if isinstance(exc, FetchError) else "permanent"
-            if isinstance(exc, FetchError) and exc.status == 429 and exc.retry_after:
+            retry_after = exc.retry_after if isinstance(exc, FetchError) else None
+            if isinstance(exc, FetchError) and exc.status == 429 and retry_after:
                 domain = urlsplit(job.url or offer.product_url).hostname or ""
-                self._blocked_until[domain] = time.monotonic() + exc.retry_after
-            if offer is not None and job.kind != "test":
-                pricing.record_failure(db, offer, competitor, str(exc), datetime.now(UTC))
-            queue.finish(db, job, "failed", result=self._partial(job), error=str(exc), error_kind=kind)
-            self._finish_run(run, success=False, error=str(exc))
-            if job.kind == "test":
-                self._test_status(competitor, "failed")
+                self._blocked_until[domain] = time.monotonic() + retry_after
+            self._failed(db, job, competitor, offer, str(exc), kind, retry_after)
         except Exception:
             log.exception("Unexpected error in job %s", job.id)
             message = "Neočakávaná chyba pri spracovaní (podrobnosti sú v logu servera)."
-            if offer is not None and job.kind != "test":
-                pricing.record_failure(db, offer, competitor, message, datetime.now(UTC))
-            queue.finish(db, job, "failed", error=message, error_kind="temporary")
-            self._finish_run(run, success=False, error=message)
+            self._failed(db, job, competitor, offer, message, "temporary", None)
+
+    def _failed(self, db: Session, job: ScrapeJob, competitor: Competitor | None, offer: CompetitorProduct | None,
+                error: str, kind: str, retry_after: float | None) -> None:
+        """Retry temporary errors of scheduled checks with exponential backoff; otherwise fail the job."""
+        now = datetime.now(UTC)
+        max_retries = competitor.scrape_config.max_retries if competitor else 0
+        will_retry = job.kind == "scheduled" and kind == "temporary" and job.attempt_count <= max_retries
+        if offer is not None and job.kind != "test":
+            pricing.record_failure(db, offer, competitor, error, now, final=not will_retry)
+        if will_retry:
+            delay = min(RETRY_BASE_SECONDS * 2 ** (job.attempt_count - 1), RETRY_MAX_SECONDS)
+            delay = max(delay * random.uniform(0.8, 1.2), retry_after or 0)
+            queue.retry_later(db, job, now + timedelta(seconds=delay), error)
+            return
+        queue.finish(db, job, "failed", result=self._partial(job), error=error, error_kind=kind)
+        queue.account_run(db, job, success=False, error=error)
+        if job.kind == "test" and competitor is not None:
+            self._test_status(competitor, "failed")
 
     # ---------- steps ----------
 
@@ -140,16 +154,6 @@ class Processor:
     @staticmethod
     def _partial(job: ScrapeJob) -> dict | None:
         return {"variant": job.result.get("variant", "")} if job.kind == "test" and job.result else None
-
-    @staticmethod
-    def _finish_run(run: ScrapeRun | None, success: bool, changed: bool = False, error: str | None = None) -> None:
-        if run is None:
-            return
-        run.finished_at = datetime.now(UTC)
-        run.success_count, run.failure_count = (1, 0) if success else (0, 1)
-        run.price_change_count = 1 if changed else 0
-        run.status = "succeeded" if success else "failed"
-        run.error_summary = error[:2000] if error else None
 
     @staticmethod
     def _test_status(competitor: Competitor, status: str) -> None:

@@ -2,7 +2,19 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, false
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    false,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -32,6 +44,7 @@ class CurrentPrice(Base):
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false())
     last_error: Mapped[str | None] = mapped_column(Text)
+    consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     etag: Mapped[str | None] = mapped_column(String(512))
     last_modified: Mapped[str | None] = mapped_column(String(64))
     content_hash: Mapped[str | None] = mapped_column(String(64))

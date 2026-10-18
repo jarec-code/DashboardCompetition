@@ -16,6 +16,7 @@ from app.schemas.competitors import (
     ScrapeRunOut,
 )
 from app.schemas.scrape_config import ScrapeConfigIn, ScrapeConfigOut
+from app.services import scheduling
 from app.services.urls import domain_of
 
 router = APIRouter(prefix="/competitors", tags=["competitors"])
@@ -155,6 +156,9 @@ def update_competitor(competitor_id: int, data: CompetitorUpdate, db: DbSession,
         changes["market"] = changes["country"]
     for field, value in changes.items():
         setattr(competitor, field, value)
+    if "default_frequency_hours" in changes:
+        scheduling.reschedule(db, db.scalars(select(CompetitorProduct).where(
+            CompetitorProduct.competitor_id == competitor.id)))
     db.commit()
     return competitor
 

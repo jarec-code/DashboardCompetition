@@ -1,5 +1,6 @@
 """Server for browser (Playwright) tests: fresh e2e database, two users, built frontend, uvicorn,
-embedded worker, and a local fake shop for scraping tests.
+embedded worker (scheduler tick every 2 s, initially disabled), and a local fake shop for scraping tests.
+Only *.e2e.test hosts can be fetched, so no test ever loads a real website.
 
   python -m tests.e2e_server     (run from backend/; uses E2E_DATABASE_URL)
 
@@ -19,6 +20,7 @@ os.environ["DATABASE_URL"] = os.environ.get("E2E_DATABASE_URL", "postgresql+psyc
 os.environ.pop("RAILWAY_ENVIRONMENT", None)
 os.environ["EMBEDDED_WORKER"] = "true"
 os.environ["WORKER_POLL_SECONDS"] = "0.3"
+os.environ["SCHEDULER_INTERVAL_SECONDS"] = "2"
 os.environ["SCRAPER_TEST_ORIGIN"] = f"http://127.0.0.1:{SHOP_PORT}"
 
 import uvicorn  # noqa: E402
@@ -28,6 +30,7 @@ from app.cli import migrate  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import User  # noqa: E402
 from app.security import hash_password  # noqa: E402
+from app.services import scheduling  # noqa: E402
 
 USERS = [("admin@e2e.test", "admin"), ("viewer@e2e.test", "viewer")]
 PASSWORD = "e2e-heslo-12345"
@@ -73,6 +76,8 @@ def main() -> None:
     migrate()
     with SessionLocal() as db:
         db.add_all(User(email=e, password_hash=hash_password(PASSWORD), role=r) for e, r in USERS)
+        # Automatic checks start disabled so tests do not interfere; the automation test enables them.
+        scheduling.save_settings(db, scheduling.SchedulingSettings(scheduler_enabled=False))
         db.commit()
     shop = ThreadingHTTPServer(("127.0.0.1", SHOP_PORT), FakeShop)
     threading.Thread(target=shop.serve_forever, daemon=True).start()

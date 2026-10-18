@@ -55,7 +55,7 @@ def site(monkeypatch):
 @pytest.fixture
 def worker(site):
     fetcher = Fetcher(Settings(), resolver=lambda h, p: ["93.184.216.34"], transport=httpx.MockTransport(site.handler))
-    return Worker(Settings(), fetcher=fetcher)
+    return Worker(Settings(scheduler_in_worker=False), fetcher=fetcher)
 
 
 def setup_offer(db, parser="alter_cz", status="active", url="https://www.alter.cz/produkt/1111", **offer_kw):

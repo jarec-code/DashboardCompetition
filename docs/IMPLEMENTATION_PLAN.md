@@ -190,10 +190,10 @@ s odkazom na existujúci záznam. Uloženie je možné iba s explicitným prízn
 - Obnova po reštarte: úlohy `running` s `locked_at` starším ako lease (napr. 10 min) sa vrátia do `pending`, alebo sa pri vyčerpaní pokusov označia ako `failed`.
 - Opakovanie: dočasné chyby (timeout, 5xx, 429) → `scheduled_at = now() + base · 2^attempt + jitter`, alebo podľa `Retry-After`. Trvalé chyby (404, 410, chyba parsera, zákaz v robots.txt) → bez opakovania. Strop `max_retries`.
 
-**Interval kontroly ponuky:** `custom_frequency` ponuky → interval podľa priority produktu
-(predvolene strategic 8 h, regular 24 h, stable 120 h; nastaviteľné v `app_settings`)
-→ `default_frequency` konkurenta → globálne 24 h. Výsledok nikdy nie je kratší ako
-`min_interval_seconds` konkurenta.
+**Interval kontroly ponuky:** `custom_frequency` ponuky → `default_frequency` konkurenta (limit pre
+daný web, má prednosť pred prioritou produktu) → interval podľa priority produktu (predvolene
+strategic 8 h, regular 24 h, stable 120 h; nastaviteľné v Nastaveniach) → globálne 24 h.
+Požiadavky na jednu doménu sú od seba vzdialené aspoň `min_interval_seconds` konkurenta.
 
 ---
 
@@ -371,7 +371,15 @@ Služba `worker` na Railway (`railway/worker.json`).
 
 ---
 
-### Etapa 5: Automatizácia
+### Etapa 5: Automatizácia ✅ kód hotový 18. 10. 2026 – MVP
+
+**Stav:**
+- **Vytvorené:** `worker/scheduler.py` (tick pod transakčným advisory lockom; vyberá aktívne ponuky aktívnych konkurentov so zapnutým scrapingom a nepozastaveným produktom, ktorých `next_check_at` uplynul a nemajú otvorenú úlohu; jeden beh na konkurenta; úlohy rozložené o `min_interval_seconds`; posun `next_check_at` o interval ±5 %), tick každých 60 s vo worker slučke alebo jednorazovo `python -m app.worker.scheduler`, nastavenia plánovania v `app_settings` (zapnutie, intervaly priorít, časové okno v miestnom čase aj cez polnoc, veľkosť dávky), prepočet `next_check_at` pri každej zmene frekvencie (konkurent, ponuka, priorita produktu, globálne intervaly, ručné priradenie), opakovanie dočasných chýb plánovaných kontrol (1, 2, 4… min ±20 %, max. 1 h, Retry-After má prednosť, strop `max_retries`), trvalé chyby bez opakovania, počítadlo zlyhaní za sebou, súhrn behu (úspešné, chyby, zmeny cien, chybové hlásenia; uzavretie po poslednej úlohe aj po obnove úlohy z pádu), heartbeat schedulera a workera, migrácia `0003`, API `/monitoring`, `/runs`, `/jobs`, `/settings/scheduling`.
+- **UI:** Aktualizácie a logy (stav schedulera a workera, fronta, kontroly a zmeny za 24 h, neaktuálne ceny, opakované zlyhania konkurentov aj ponúk, behy a úlohy s filtrami, obnovovanie každých 15 s), počet problémov v navigácii, nastavenia plánovania, termín ďalšej kontroly pri ponuke.
+- **Testy (skutočný výstup):** backend 187 passed (13 nových pre scheduler a monitoring), Vitest 3 passed, Playwright e2e 19 passed (3 nové: scheduler sám skontroluje novú ponuku, stránka Aktualizácie a logy, nastavenia plánovania). V testovacom režime sa načítavajú iba domény `*.e2e.test`.
+- **Rozdiel oproti plánu:** worker spracúva úlohy postupne (jedna naraz); súbežnosť `max_concurrency` je uložená, ale zatiaľ sa nevyužíva – pri Free pláne a jednom konkurentovi to nie je potrebné. Upozornenia pri opakovaných zlyhaniach sú zatiaľ odvodené z behov a počítadla (sekcia „Opakované zlyhania“); pravidlá upozornení prídu v etape 7.
+
+### Etapa 5: Automatizácia (pôvodný rozsah)
 
 **Cieľ:** pravidelné a spoľahlivé aktualizácie bez zásahu používateľa. **Po tejto etape je MVP
 hotové a spĺňa akceptačné kritériá z kap. 19 zadania.**
@@ -478,7 +486,7 @@ Predvolene vypnuté, aktivácia iba po nastavení poskytovateľa a explicitnom z
 |---|---|---|
 | Lokálne nie je Docker ani PostgreSQL, Python je 3.9 | Nedajú sa spustiť integračné testy | Inštalácia `postgresql@16`, Node.js a Python 3.12 cez Homebrew alebo uv; CI na GitHub Actions s PostgreSQL. |
 | Automatický deploy na Railway sa v minulosti nespúšťal | Nasadená stará verzia | Pred etapou 1 overiť Source (repo, branch `main`) pre každú službu; každá služba má vlastný config súbor. |
-| Railway ukončuje podporu `railway.json` (config-as-code) k **1. 12. 2026** | Po tomto dátume sa nepoužije Dockerfile ani pre-deploy migrácie | Pred 1. 12. 2026 previesť na Infrastructure as Code (`railway config migrate`), najneskôr v etape 5. |
+| Railway ukončuje podporu `railway.json` (config-as-code) k **1. 12. 2026** | Po tomto dátume by sa stratil health check a politika reštartov | Riešené v etape 5: migrácie bežia pri štarte kontajnera (nie v pre-deploy), Dockerfile je v koreni repozitára (Railway ho nájde sám). Pred 1. 12. 2026 zostáva iba nastaviť health check `/readyz` v Settings → Deploy, alebo `railway config migrate` + `cutover` (mení konfiguráciu služby, iba so súhlasom). |
 | Ochrana proti botom (Cloudflare a pod.) na konkurenčných weboch | Ceny sa nedajú získať | Neobchádzať; hľadať feed alebo API; web označiť ako nepodporovaný. |
 | Weby generujúce obsah JavaScriptom | Bežný scraping nič nenájde | Etapa 10, iba kde je nutné; vyššie nároky na pamäť a cenu. |
 | Učebnice majú veľa podobných vydaní („revidované RVP ZV“, „nová edice“, diely) | Chybné párovanie podľa názvu | ISBN ako primárny kľúč; párovanie podľa názvu nad prahom iba do `pending_review`, nie automaticky. |

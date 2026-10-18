@@ -7,11 +7,11 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.models import ScrapeJob
+from app.models import ScrapeJob, ScrapeRun
 
 PRIORITY = {"test": 10, "manual": 20, "scheduled": 100}  # lower runs first
 MAX_ATTEMPTS_AFTER_CRASH = 3
@@ -70,6 +70,29 @@ def retry_later(db: Session, job: ScrapeJob, at: datetime, error: str) -> None:
     job.last_error, job.error_kind = error[:2000], "temporary"
 
 
+def account_run(db: Session, job: ScrapeJob, success: bool | None, changed: bool = False,
+             error: str | None = None) -> None:
+    """Add a finished job to its run; close the run when no job of it is open any more."""
+    if job.run_id is None:
+        return
+    run = db.scalars(select(ScrapeRun).where(ScrapeRun.id == job.run_id).with_for_update()).one()
+    if success is True:
+        run.success_count += 1
+    elif success is False:
+        run.failure_count += 1
+        summary = run.error_summary or ""
+        if error and error not in summary and len(summary) < 1500:
+            run.error_summary = f"{summary}\n{error}".strip()
+    if changed:
+        run.price_change_count += 1
+    open_jobs = db.scalar(select(func.count(ScrapeJob.id)).where(
+        ScrapeJob.run_id == run.id, ScrapeJob.id != job.id, ScrapeJob.status.in_(("pending", "running"))))
+    if not open_jobs:
+        run.finished_at = datetime.now(UTC)
+        run.status = ("succeeded" if not run.failure_count else
+                      "failed" if not run.success_count else "partial")
+
+
 def recover_abandoned(db: Session, lease_seconds: int) -> int:
     """Return jobs of crashed workers to the queue (or fail them after repeated crashes). Commits."""
     expired = now() - timedelta(seconds=lease_seconds)
@@ -77,8 +100,9 @@ def recover_abandoned(db: Session, lease_seconds: int) -> int:
         ScrapeJob.locked_at < expired, ScrapeJob.locked_at.is_(None))).with_for_update(skip_locked=True)))
     for job in stuck:
         if job.attempt_count >= MAX_ATTEMPTS_AFTER_CRASH:
-            finish(db, job, "failed", error="Úloha opakovane nedobehla (worker bol prerušený).",
-                   error_kind="permanent")
+            message = "Úloha opakovane nedobehla (worker bol prerušený)."
+            finish(db, job, "failed", error=message, error_kind="permanent")
+            account_run(db, job, success=False, error=message)
         else:
             job.status, job.locked_at = "pending", None
             job.last_error = "Worker bol prerušený, úloha sa zopakuje."

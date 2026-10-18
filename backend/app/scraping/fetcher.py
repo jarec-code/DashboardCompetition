@@ -134,6 +134,8 @@ class Fetcher:
         if self._is_test_host(parts.hostname or ""):
             return self.settings.scraper_test_origin.rstrip("/") + (parts.path or "/") + (
                 f"?{parts.query}" if parts.query else "")
+        if self.settings.scraper_test_origin:
+            raise FetchError("V testovacom režime sa načítavajú iba domény *.e2e.test.", "permanent")
         try:
             return check_url(url, self.resolver)
         except UnsafeUrl as exc:

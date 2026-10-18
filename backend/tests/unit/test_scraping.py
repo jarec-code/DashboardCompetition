@@ -231,3 +231,11 @@ def test_parser_config_validation():
         validate_parser_config("alter_cz", {"price": ".x"})
     with pytest.raises(ValueError):
         validate_parser_config("python", {})
+
+
+def test_test_mode_fetches_only_test_hosts():
+    fetcher = Fetcher(Settings(scraper_test_origin="http://127.0.0.1:9"), resolver=lambda h, p: [PUBLIC_IP],
+                      transport=httpx.MockTransport(lambda r: httpx.Response(200, text="x", headers=HTML)))
+    with pytest.raises(FetchError, match="testovacom režime"):
+        fetcher.fetch("https://www.alter.cz/produkt/1", timeout=5)
+    assert fetcher.fetch("https://shop.e2e.test/p", timeout=5).text == "x"

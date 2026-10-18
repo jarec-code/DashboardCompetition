@@ -64,7 +64,7 @@ def record_success(db: Session, offer: CompetitorProduct, data: Extracted, obser
     current.title = data.title or current.title
     current.found_identifiers = data.identifiers or current.found_identifiers or {}
     current.last_checked_at = current.last_success_at = observed_at
-    current.is_stale, current.last_error = False, None
+    current.is_stale, current.last_error, current.consecutive_failures = False, None, 0
     current.etag, current.last_modified = etag, last_modified
     current.updated_at = observed_at
     return Outcome(changed=bool(change_types), change_types=change_types)
@@ -74,16 +74,19 @@ def record_not_modified(db: Session, offer: CompetitorProduct, observed_at: date
     """HTTP 304: the page did not change since the last successful check."""
     current = _locked_current(db, offer.id)
     current.last_checked_at = current.last_success_at = observed_at
-    current.is_stale, current.last_error = False, None
+    current.is_stale, current.last_error, current.consecutive_failures = False, None, 0
     current.updated_at = observed_at
     return Outcome(changed=False, change_types=[])
 
 
 def record_failure(db: Session, offer: CompetitorProduct, competitor: Competitor, error: str,
-                   observed_at: datetime) -> None:
+                   observed_at: datetime, final: bool = True) -> None:
+    """`final=False` for an attempt that will be retried: it does not count as a failed check yet."""
     current = _locked_current(db, offer.id)
     current.last_checked_at = observed_at
     current.last_error = error[:2000]
+    if final:
+        current.consecutive_failures += 1
     current.is_stale = scheduling.is_stale(current.last_success_at,
                                            scheduling.interval_hours(db, offer, competitor), observed_at)
     current.updated_at = observed_at

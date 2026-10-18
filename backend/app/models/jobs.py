@@ -9,6 +9,7 @@ from app.db import Base
 from app.models.base import one_of, utc_now_column
 
 RUN_STATUSES = ("running", "succeeded", "partial", "failed")
+RUN_TRIGGERS = ("scheduled", "manual")
 JOB_KINDS = ("scheduled", "manual", "test")
 JOB_STATUSES = ("pending", "running", "succeeded", "failed", "cancelled")
 ERROR_KINDS = ("temporary", "permanent")
@@ -17,10 +18,15 @@ ERROR_KINDS = ("temporary", "permanent")
 class ScrapeRun(Base):
     """Aggregated result of one scraping run for a competitor."""
     __tablename__ = "scrape_runs"
-    __table_args__ = (one_of("status", RUN_STATUSES, "ck_scrape_runs_status"),)
+    __table_args__ = (
+        one_of("status", RUN_STATUSES, "ck_scrape_runs_status"),
+        one_of("trigger", RUN_TRIGGERS, "ck_scrape_runs_trigger"),
+        Index("ix_scrape_runs_started_at", "started_at"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     competitor_id: Mapped[int] = mapped_column(ForeignKey("competitors.id", ondelete="CASCADE"), index=True)
+    trigger: Mapped[str] = mapped_column(String(16), default="manual", server_default="manual")
     started_at: Mapped[datetime] = utc_now_column()
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(16), default="running")
@@ -39,6 +45,8 @@ class ScrapeJob(Base):
         Index("uq_scrape_jobs_open_offer", "competitor_product_id", unique=True,
               postgresql_where=text("status IN ('pending', 'running')")),
         Index("ix_scrape_jobs_claim", "status", "priority", "scheduled_at"),
+        Index("ix_scrape_jobs_created_at", "created_at"),
+        Index("ix_scrape_jobs_run_id", "run_id"),
         one_of("kind", JOB_KINDS, "ck_scrape_jobs_kind"),
         one_of("status", JOB_STATUSES, "ck_scrape_jobs_status"),
         one_of("error_kind", ERROR_KINDS, "ck_scrape_jobs_error_kind"),

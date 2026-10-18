@@ -1,6 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
 // Browser tests against the real backend and the production build (run `npm run build` first).
+// Files run in order (01-…, 02-…) against one database that is reset when the server starts.
 // The server resets its own e2e database on every start, see backend/tests/e2e_server.py.
 const PORT = 8010;
 const python = process.env.E2E_PYTHON ?? ".venv/bin/python";

@@ -34,8 +34,9 @@ then `cd frontend && npm run build && npm run e2e` (starts its own server on por
 
 ### Deploy on Railway
 
-The Railway service builds the new application from `deploy/Dockerfile`, as set in the root
-`railway.json` (Railway config-as-code, supported until 2026-12-01; migrate with `railway config migrate`).
+The Railway service builds the application from the root `Dockerfile` (detected automatically). The root
+`railway.json` adds the health check `/readyz` and the restart policy; Railway reads such files only until
+2026-12-01, after that set the health check in *Settings → Deploy* or migrate with `railway config migrate`.
 
 1. In the Railway project add **PostgreSQL** (*New → Database → PostgreSQL*).
 2. Connect the service to the GitHub repository (branch `main`).

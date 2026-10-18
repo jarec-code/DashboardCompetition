@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     embedded_worker: bool = True
     worker_poll_seconds: float = Field(default=2.0, ge=0.2, le=60)
     job_lease_seconds: int = Field(default=600, ge=60)  # a running job older than this is considered abandoned
+    # The worker loop also runs the scheduler tick this often (set false to run the scheduler elsewhere).
+    scheduler_in_worker: bool = True
+    scheduler_interval_seconds: float = Field(default=60, ge=1, le=3600)
     scraper_user_agent: str = "CompetitionChecker/1.0 (price monitoring)"
     scraper_max_bytes: int = Field(default=5 * 1024 * 1024, ge=64 * 1024)
     robots_cache_seconds: int = Field(default=6 * 3600, ge=60)

@@ -1,4 +1,5 @@
-"""Job worker: takes jobs from the PostgreSQL queue and processes them one at a time.
+"""Job worker: takes jobs from the PostgreSQL queue and processes them one at a time. It also runs the
+scheduler tick (SCHEDULER_INTERVAL_SECONDS) and records a heartbeat shown on the Updates page.
 
 Runs either as its own process (`python -m app.worker`, for a separate Railway service) or as a
 background thread of the web process (EMBEDDED_WORKER=true, the default on the Free plan).
@@ -8,11 +9,13 @@ import logging
 import signal
 import threading
 import time
+from datetime import UTC, datetime
 
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.scraping.fetcher import Fetcher
-from app.worker import queue
+from app.services import scheduling
+from app.worker import queue, scheduler
 from app.worker.processor import Processor
 
 log = logging.getLogger("worker")
@@ -25,14 +28,21 @@ class Worker:
         self.fetcher = fetcher or Fetcher(self.settings)
         self.processor = Processor(self.fetcher)
         self._last_recovery = 0.0
+        self._last_tick = 0.0
 
     def run_once(self) -> int:
-        """Process at most one job. Returns how many jobs were processed (0 or 1)."""
+        """Housekeeping when due, then process at most one job. Returns the number of processed jobs."""
         with SessionLocal() as db:
             if time.monotonic() - self._last_recovery > RECOVERY_INTERVAL_SECONDS:
                 self._last_recovery = time.monotonic()
                 if recovered := queue.recover_abandoned(db, self.settings.job_lease_seconds):
                     log.warning("Recovered %d abandoned job(s)", recovered)
+                scheduling.set_heartbeat(db, "worker", datetime.now(UTC))
+                db.commit()
+            if self.settings.scheduler_in_worker and \
+                    time.monotonic() - self._last_tick > self.settings.scheduler_interval_seconds:
+                self._last_tick = time.monotonic()
+                scheduler.tick(db)
             jobs = queue.claim(db, limit=1)
             for job in jobs:
                 self.processor.process(db, job)

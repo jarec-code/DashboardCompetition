@@ -24,7 +24,9 @@ export function OfferUrlCell({ offer }: { offer: Offer }) {
 /** Price, availability and freshness; unknown values are shown as such, never invented. */
 export function OfferPriceCell({ offer }: { offer: Offer }) {
   const c = offer.current;
-  if (!c || !c.last_checked_at) return <Text size="sm" c="dimmed">zatiaľ nekontrolované</Text>;
+  const next = offer.status === "active" && offer.next_check_at
+    ? <Text size="xs" c="dimmed">ďalšia kontrola {formatDateTime(offer.next_check_at)}</Text> : null;
+  if (!c || !c.last_checked_at) return <Stack gap={0}><Text size="sm" c="dimmed">zatiaľ nekontrolované</Text>{next}</Stack>;
   const availability = AVAILABILITY_LABELS[c.availability] ?? AVAILABILITY_LABELS.unknown;
   return (
     <Stack gap={2}>
@@ -37,6 +39,7 @@ export function OfferPriceCell({ offer }: { offer: Offer }) {
         <Text size="xs" c="dimmed">{formatDateTime(c.last_success_at)}</Text>
       </Group>
       {c.last_error && <Text size="xs" c="red" lineClamp={1} title={c.last_error}>{c.last_error}</Text>}
+      {next}
     </Stack>
   );
 }
