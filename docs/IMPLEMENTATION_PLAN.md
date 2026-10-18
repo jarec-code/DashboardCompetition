@@ -300,7 +300,14 @@ zmena stavu nemaže dáta; vyhľadávanie, filter, stránkovanie. UI e2e: pridan
 
 ---
 
-### Etapa 3: Produkty, konkurenčné ponuky a párovanie
+### Etapa 3: Produkty, konkurenčné ponuky a párovanie ✅ kód hotový 18. 10. 2026
+
+**Stav:**
+- **Vytvorené:** API `/api/products` (CRUD, ceny podľa trhu s predvolenou menou podľa trhu, parametre predmet/ročník/typ, vyhľadávanie podľa názvu aj ISBN v ľubovoľnom formáte, filtre, triedenie, stránkovanie), CSV import s výsledkom po riadkoch (UTF-8 aj Windows-1250, mena aj z textu ceny), migrácia `0002` (unikátne ISBN/EAN/SKU), API ponúk (hromadné pridanie URL s kontrolou domény konkurenta a duplicít, zoznamy pre konkurenta, produkt aj frontu párovania, úprava, pozastavenie, odobratie s archiváciou pri existujúcej histórii, priradenie ručne / ignorovať / automaticky, kandidáti).
+- **Párovanie** (`services/matching.py`, bez AI): ISBN-10 → ISBN-13 a kontrolné číslice EAN, presná zhoda GTIN alebo SKU → priradené; podobný názov ≥ 0,9 s jasným odstupom → priradené; 0,6–0,9 alebo viac rovnako dobrých kandidátov → „čaká na kontrolu“; nezhodné čísla v názve (ročník, diel) znižujú skóre na polovicu; ručné rozhodnutie automatika nikdy neprepíše; nový alebo zmenený produkt znovu vyhodnotí otvorené ponuky.
+- **UI:** Produkty (zoznam, formulár s cenami pre viac trhov, CSV import, detail s priradenými ponukami), záložka Párovanie (fronta podľa stavu), v detaile konkurenta záložka Sledované produkty (pridanie URL, filtre, priradenie cez okno s kandidátmi a vyhľadávaním, ignorovanie, pozastavenie, odobratie).
+- **Testy (skutočný výstup):** backend 115 passed (36 nových), Vitest 3 passed, Playwright e2e 11 passed (4 nové: produkt s cenami pre SK a CZ a chybné ISBN, CSV import, pridanie URL s kontrolou domény a duplicít, ručné priradenie, ignorovanie a fronta Párovanie). UI skontrolované na snímkach.
+- **Poznámka:** automatické párovanie má zatiaľ málo vstupov, lebo názov a identifikátory ponuky prinesie až scraping (etapa 4). Pre alter.cz bude prevažovať ručné priradenie (iné vydavateľstvo, iné ISBN).
 
 **Cieľ:** vlastné produkty, ich ceny podľa trhu a konkurenčné ponuky s priradením.
 

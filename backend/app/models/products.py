@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 from app.models.base import VAT_MODES, TimestampMixin, one_of
@@ -27,15 +27,18 @@ class Product(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     internal_id: Mapped[str | None] = mapped_column(String(64), unique=True)
     name: Mapped[str] = mapped_column(String(500))
-    isbn: Mapped[str | None] = mapped_column(String(13), index=True)  # normalized ISBN-13
-    ean: Mapped[str | None] = mapped_column(String(14), index=True)
-    sku: Mapped[str | None] = mapped_column(String(64), index=True)
+    isbn: Mapped[str | None] = mapped_column(String(13), index=True, unique=True)  # normalized ISBN-13
+    ean: Mapped[str | None] = mapped_column(String(14), index=True, unique=True)
+    sku: Mapped[str | None] = mapped_column(String(64), index=True, unique=True)
     brand: Mapped[str | None] = mapped_column(String(200))
     category: Mapped[str | None] = mapped_column(String(200))
     # e.g. {"subject": "matematika", "grade": 2, "type": "pracovní sešit"}
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     priority: Mapped[str] = mapped_column(String(16), default="regular")
     tracking_status: Mapped[str] = mapped_column(String(16), default="active")
+
+    prices: Mapped[list["ProductPrice"]] = relationship(cascade="all, delete-orphan", order_by="ProductPrice.market",
+                                                        lazy="selectin")
 
 
 class ProductPrice(TimestampMixin, Base):

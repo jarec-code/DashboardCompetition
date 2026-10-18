@@ -9,10 +9,13 @@ import { CompetitorDetailPage } from "./pages/competitors/CompetitorDetailPage";
 import { CompetitorsPage } from "./pages/competitors/CompetitorsPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
+import { ProductDetailPage } from "./pages/products/ProductDetailPage";
+import { ProductsPage } from "./pages/products/ProductsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 
 const IMPLEMENTED: Record<string, ReactNode> = {
   "/konkurencia": <CompetitorsPage />,
+  "/produkty": <ProductsPage />,
   "/nastavenia": <SettingsPage />,
 };
 
@@ -46,6 +49,7 @@ export function App() {
                  element={IMPLEMENTED[item.path] ?? <PlaceholderPage item={item} />} />
         ))}
         <Route path="/konkurencia/:id" element={<CompetitorDetailPage />} />
+        <Route path="/produkty/:id" element={<ProductDetailPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

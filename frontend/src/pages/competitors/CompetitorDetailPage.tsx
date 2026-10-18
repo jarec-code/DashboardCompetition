@@ -11,6 +11,7 @@ import { useIsAdmin } from "../../auth/auth";
 import { formatDateTime, formatFrequency } from "../../format";
 import { CompetitorFormModal } from "./CompetitorFormModal";
 import { RUN_STATUS_LABELS, SOURCE_LABELS, STATUS_LABELS, TYPE_LABELS } from "./labels";
+import { OffersPanel } from "../offers/OffersPanel";
 import { ScrapeConfigForm } from "./ScrapeConfigForm";
 import { StatusActions } from "./StatusActions";
 
@@ -127,9 +128,8 @@ export function CompetitorDetailPage() {
           </Tabs.List>
           <Tabs.Panel value="basic" p="md"><BasicInfo competitor={competitor} /></Tabs.Panel>
           <Tabs.Panel value="offers" p="md">
-            <Text c="dimmed" size="sm">
-              Pridávanie produktových URL a ich priradenie k vlastným produktom bude dostupné v etape 3.
-            </Text>
+            <OffersPanel competitorId={competitor.id} domain={competitor.domain}
+                         archived={competitor.status === "archived"} />
           </Tabs.Panel>
           <Tabs.Panel value="scraping" p="md">
             <ScrapeConfigForm competitorId={competitor.id} config={competitor.scrape_config} readOnly={!isAdmin} />

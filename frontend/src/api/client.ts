@@ -6,6 +6,10 @@ export function setCsrfToken(token: string | null) {
   csrfToken = token;
 }
 
+export function getCsrfToken(): string | null {
+  return csrfToken;
+}
+
 export class ApiError extends Error {
   /** `detail` is the server's structured error detail, when it sent an object (e.g. a duplicate domain). */
   constructor(public status: number, message: string, public detail?: Record<string, unknown>) {

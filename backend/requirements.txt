@@ -9,3 +9,4 @@ argon2-cffi>=23.1,<26
 itsdangerous>=2.2,<3
 httpx>=0.27,<1
 beautifulsoup4>=4.12,<5
+python-multipart>=0.0.18,<1
