@@ -452,6 +452,7 @@ Predvolene vypnuté, aktivácia iba po nastavení poskytovateľa a explicitnom z
 |---|---|---|
 | Lokálne nie je Docker ani PostgreSQL, Python je 3.9 | Nedajú sa spustiť integračné testy | Inštalácia `postgresql@16`, Node.js a Python 3.12 cez Homebrew alebo uv; CI na GitHub Actions s PostgreSQL. |
 | Automatický deploy na Railway sa v minulosti nespúšťal | Nasadená stará verzia | Pred etapou 1 overiť Source (repo, branch `main`) pre každú službu; každá služba má vlastný config súbor. |
+| Railway ukončuje podporu `railway.json` (config-as-code) k **1. 12. 2026** | Po tomto dátume sa nepoužije Dockerfile ani pre-deploy migrácie | Pred 1. 12. 2026 previesť na Infrastructure as Code (`railway config migrate`), najneskôr v etape 5. |
 | Ochrana proti botom (Cloudflare a pod.) na konkurenčných weboch | Ceny sa nedajú získať | Neobchádzať; hľadať feed alebo API; web označiť ako nepodporovaný. |
 | Weby generujúce obsah JavaScriptom | Bežný scraping nič nenájde | Etapa 10, iba kde je nutné; vyššie nároky na pamäť a cenu. |
 | Učebnice majú veľa podobných vydaní („revidované RVP ZV“, „nová edice“, diely) | Chybné párovanie podľa názvu | ISBN ako primárny kľúč; párovanie podľa názvu nad prahom iba do `pending_review`, nie automaticky. |

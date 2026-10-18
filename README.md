@@ -4,7 +4,7 @@ Price monitoring of competitor e-shops. The repository currently holds two appli
 
 - **New application** (`backend/`, `frontend/`): FastAPI + PostgreSQL + React, built in stages
   according to [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md). Stage 1 (foundation, login) is done.
-- **Old application** (`app.py`, Flask + SQLite): stays in service until the new one replaces it (stage 6).
+- **Old application** (`app.py`, Flask + SQLite): no longer deployed; kept for local use until stage 6 removes it.
 
 ## New application
 
@@ -33,11 +33,11 @@ and `cd frontend && npm test`. New migration after changing models:
 
 ### Deploy on Railway
 
-The new application is a separate Railway service built from `deploy/Dockerfile`.
+The Railway service builds the new application from `deploy/Dockerfile`, as set in the root
+`railway.json` (Railway config-as-code, supported until 2026-12-01; migrate with `railway config migrate`).
 
 1. In the Railway project add **PostgreSQL** (*New → Database → PostgreSQL*).
-2. Add a service from the GitHub repository (*New → GitHub Repo*). In its *Settings*, set the
-   **config file path** to `/railway/web.json`.
+2. Connect the service to the GitHub repository (branch `main`).
 3. In the service's *Variables*:
    - `DATABASE_URL` = `${{Postgres.DATABASE_URL}}` (reference to the database service),
    - `SECRET_KEY` = random string of 48+ characters (`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
@@ -59,7 +59,7 @@ python3 -m venv .venv
 
 Open http://localhost:5050 (set `PORT` to use another port; avoid 5000 on macOS, where AirPlay Receiver uses it).
 
-### Deploy on Railway (old application)
+### Deploy on Railway (old application, no longer deployed)
 
 `railway.json` makes Railway start the app with gunicorn; `gunicorn.conf.py` binds it to `0.0.0.0:$PORT`.
 The deploy log prints `Competition Checker listening on 0.0.0.0:<port>`. The public domain's target port
