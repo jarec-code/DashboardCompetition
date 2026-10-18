@@ -21,3 +21,18 @@ export function formatMoney(value: string | number | null | undefined, currency:
     return `${amount.toLocaleString("sk-SK", { minimumFractionDigits: 2 })} ${currency}`;
   }
 }
+
+/** "+15,00 Kč" / "−13,2 %": explicit sign (true minus sign) for differences. */
+export function formatSignedMoney(value: string | number | null | undefined, currency: string | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const amount = Number(value);
+  const text = formatMoney(Math.abs(amount), currency);
+  return amount > 0 ? `+${text}` : amount < 0 ? `−${text}` : text;
+}
+
+export function formatSignedPercent(value: string | number | null | undefined): string {
+  if (value === null || value === undefined || value === "") return "—";
+  const amount = Number(value);
+  const text = `${Math.abs(amount).toLocaleString("sk-SK", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+  return amount > 0 ? `+${text}` : amount < 0 ? `−${text}` : text;
+}

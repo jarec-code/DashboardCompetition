@@ -1,4 +1,4 @@
-"""Normalization of scraped values. Ported from the original scraper.py, using Decimal for prices."""
+"""Normalization of scraped values (prices as Decimal, currency, availability, identifiers)."""
 import re
 from decimal import Decimal, InvalidOperation
 

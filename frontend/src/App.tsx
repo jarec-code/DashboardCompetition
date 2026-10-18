@@ -5,8 +5,10 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useSession } from "./auth/auth";
 import { AppLayout } from "./layout/AppLayout";
 import { NAV_ITEMS } from "./layout/navigation";
+import { ComparisonPage } from "./pages/comparison/ComparisonPage";
 import { CompetitorDetailPage } from "./pages/competitors/CompetitorDetailPage";
 import { CompetitorsPage } from "./pages/competitors/CompetitorsPage";
+import { DashboardPage } from "./pages/dashboard/DashboardPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { ProductDetailPage } from "./pages/products/ProductDetailPage";
@@ -15,6 +17,8 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { UpdatesPage } from "./pages/updates/UpdatesPage";
 
 const IMPLEMENTED: Record<string, ReactNode> = {
+  "/": <DashboardPage />,
+  "/porovnanie": <ComparisonPage />,
   "/konkurencia": <CompetitorsPage />,
   "/produkty": <ProductsPage />,
   "/aktualizacie": <UpdatesPage />,

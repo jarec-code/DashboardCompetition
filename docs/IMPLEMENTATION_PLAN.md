@@ -406,7 +406,16 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
-### Etapa 6: Cenové porovnanie a dashboard
+### Etapa 6: Cenové porovnanie a dashboard ✅ kód hotový 18. 10. 2026
+
+**Stav:**
+- **Vytvorené:** `services/comparison.py` (riadok = vlastný produkt × trh konkurenta; vlastná cena pre trh konkurenta; rozdiel absolútne a v %; najnižšia a najvyššia porovnateľná cena; počet lacnejších konkurentov; pozícia najlacnejší / nie / bez porovnania; iná mena alebo známy iný režim DPH sa neporovnáva; neznáme DPH na jednej strane sa porovná, ale označí; chýbajúca vlastná cena pre trh a neznáma cena konkurenta sú označené; archivované ponuky a konkurenti sa vynechávajú), API `/comparison` (filtre trh, konkurent, text, pozícia; triedenie podľa názvu alebo najväčšieho rozdielu v náš neprospech; stránkovanie), `/comparison/export.csv` (bodkočiarka, UTF-8 s BOM pre Excel), `/dashboard` (konkurenti, aktívne weby, sledované ponuky, úspešné a neúspešné kontroly za 24 h, chýbajúce alebo neaktuálne ceny, zmeny cien za 24 h a 7 dní bez prvých záznamov, počet produktov s lacnejším konkurentom, najväčšie poklesy za 30 dní cez `LAG` nad históriou, posledné zmeny, posledné behy).
+- **UI:** Cenové porovnanie (súhrnné dlaždice, stĺpec pre každého konkurenta, smer rozdielu vyjadrený šípkou a slovom „lacnejší / drahší“, nie iba farbou, dostupnosť, čas overenia, neaktuálne a neporovnateľné ceny s dôvodom, filtre v URL, export), Dashboard.
+- **Odstránená stará Flask aplikácia** (`app.py`, `db.py`, `scraper.py`, `matcher.py`, šablóny, staré testy, `requirements.txt`, `gunicorn.conf.py`); jej logika žije v `backend/`.
+- **Testy (skutočný výstup):** backend 192 passed (5 nových: pravidlá porovnania, filtre a triedenie, CSV, dashboard vrátane poklesov), Vitest 3 passed, Playwright e2e 22 passed (3 nové: drahší / lacnejší po zmene vlastnej ceny, filter pozície, CSV export, dashboard s odkazom na porovnanie).
+- **Poznámka k výkonu:** porovnanie sa skladá v Pythone nad celým katalógom priradených ponúk a až potom stránkuje; pri stovkách až nízkych tisícoch produktov je to rýchle. Pri väčšom katalógu presunúť výpočet do SQL (etapa 9).
+
+### Etapa 6: Cenové porovnanie a dashboard (pôvodný rozsah)
 
 **Cieľ:** nahradiť porovnanie zo starej aplikácie a pridať prehľad.
 

@@ -13,6 +13,20 @@ const SESSION = {
   csrf_token: "token-123",
 };
 
+const DASHBOARD = {
+  competitors_total: 1, competitors_active: 1, offers_tracked: 1, checks_24h: 0, failed_checks_24h: 0,
+  missing_or_stale: 0, price_changes_24h: 0, price_changes_7d: 0, cheaper_competitor_rows: 0, comparable_rows: 0,
+  biggest_drops: [], recent_changes: [], recent_runs: [],
+};
+const MONITORING = { problem_competitors: [], problem_offers: [] };
+
+/** Pages call these endpoints after login; everything else returns the session. */
+function appData(url: string) {
+  if (url === "/api/dashboard") return json(200, DASHBOARD);
+  if (url === "/api/monitoring") return json(200, MONITORING);
+  return json(200, SESSION);
+}
+
 function json(status: number, body: unknown) {
   return Promise.resolve(new Response(body === undefined ? null : JSON.stringify(body), {
     status, headers: { "Content-Type": "application/json" },
@@ -54,7 +68,7 @@ describe("App", () => {
     let loggedIn = false;
     vi.stubGlobal("fetch", vi.fn((url: string) => {
       if (url === "/api/auth/login") { loggedIn = true; return json(200, SESSION); }
-      return loggedIn ? json(200, SESSION) : json(401, { detail: "Nie ste prihlásený." });
+      return loggedIn ? appData(url) : json(401, { detail: "Nie ste prihlásený." });
     }));
     renderApp("/");
 
@@ -73,7 +87,7 @@ describe("App", () => {
     let loggedIn = true;
     const fetchMock = vi.fn((url: string) => {
       if (url === "/api/auth/logout") { loggedIn = false; return json(204, undefined); }
-      return loggedIn ? json(200, SESSION) : json(401, { detail: "Nie ste prihlásený." });
+      return loggedIn ? appData(url) : json(401, { detail: "Nie ste prihlásený." });
     });
     vi.stubGlobal("fetch", fetchMock);
     renderApp("/");
