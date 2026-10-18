@@ -13,6 +13,18 @@ python3 -m venv .venv
 
 Open http://localhost:5050 (set `PORT` to use another port; avoid 5000 on macOS, where AirPlay Receiver uses it).
 
+## Deploy on Railway
+
+`railway.json` makes Railway start the app with gunicorn on `0.0.0.0:$PORT`.
+
+1. Push the repo and deploy it as a Railway service.
+2. **Add a volume** to the service (any mount path, e.g. `/data`). The app stores its SQLite database there
+   automatically (via `RAILWAY_VOLUME_MOUNT_PATH`). Without a volume, all data is lost on every redeploy.
+3. Optional: set the `SECRET_KEY` variable to a random string.
+4. Under *Settings → Networking*, click *Generate Domain* to get a public URL.
+
+The app has no login, so anyone with the URL can see and change the data.
+
 ## How to use
 
 1. **Our products**: add products by hand, or import a CSV with the columns `name`, `price` and optionally `sku` and `currency`.

@@ -3,7 +3,10 @@ import sqlite3
 
 from flask import g
 
-DB_PATH = os.environ.get("COMPETITION_DB", os.path.join(os.path.dirname(__file__), "competition.db"))
+# On Railway, attach a volume: its mount path is exposed as RAILWAY_VOLUME_MOUNT_PATH,
+# so data survives redeploys. Without a volume the container's disk is wiped on each deploy.
+DB_PATH = os.environ.get("COMPETITION_DB") or os.path.join(
+    os.environ.get("RAILWAY_VOLUME_MOUNT_PATH") or os.path.dirname(os.path.abspath(__file__)), "competition.db")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS our_products (
@@ -59,6 +62,7 @@ def close_db(_exc=None):
 
 
 def init_db():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.executescript(SCHEMA)
     conn.close()

@@ -10,7 +10,7 @@ from matcher import assign_matches
 from scraper import parse_price, scrape_competitor
 
 app = Flask(__name__)
-app.secret_key = "competition-checker-local"
+app.secret_key = os.environ.get("SECRET_KEY", "competition-checker-local")
 app.teardown_appcontext(close_db)
 init_db()
 
@@ -292,5 +292,8 @@ def money(value, currency=None):
 
 
 if __name__ == "__main__":
+    # Local development only; on Railway gunicorn runs the app (see railway.json).
     # Not 5000: on macOS that port is taken by the AirPlay Receiver.
-    app.run(debug=True, port=int(os.environ.get("PORT", 5050)))
+    on_railway = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+    app.run(host="0.0.0.0" if on_railway else "127.0.0.1", debug=not on_railway,
+            port=int(os.environ.get("PORT", 5050)))
