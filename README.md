@@ -22,10 +22,11 @@ The deploy log prints `Competition Checker listening on 0.0.0.0:<port>`. The pub
 1. Push the repo and deploy it as a Railway service.
 2. **Add a volume** to the service (any mount path, e.g. `/data`). The app stores its SQLite database there
    automatically (via `RAILWAY_VOLUME_MOUNT_PATH`). Without a volume, all data is lost on every redeploy.
-3. Optional: set the `SECRET_KEY` variable to a random string.
+3. Set `APP_PASSWORD` (required: without it the app stays locked on Railway) and optionally
+   `APP_USERNAME` (default `admin`). Optionally set `SECRET_KEY` to a random string.
 4. Under *Settings → Networking*, click *Generate Domain* to get a public URL.
 
-The app has no login, so anyone with the URL can see and change the data.
+The browser asks for the username and password (HTTP Basic Auth). `/healthz` stays open for Railway's health check.
 
 ## How to use
 

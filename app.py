@@ -1,4 +1,5 @@
 import csv
+import hmac
 import io
 import os
 from datetime import datetime
@@ -13,6 +14,40 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "competition-checker-local")
 app.teardown_appcontext(close_db)
 init_db()
+
+
+# ---------- access password ----------
+
+APP_USERNAME = os.environ.get("APP_USERNAME", "admin")
+APP_PASSWORD = os.environ.get("APP_PASSWORD")
+ON_RAILWAY = bool(os.environ.get("RAILWAY_ENVIRONMENT"))
+
+
+@app.before_request
+def require_password():
+    """HTTP Basic Auth for every page except the health check.
+
+    On Railway the app stays locked until APP_PASSWORD is set; locally it is open
+    unless APP_PASSWORD is set.
+    """
+    if request.path == "/healthz":
+        return None
+    if not APP_PASSWORD:
+        if ON_RAILWAY:
+            return Response("Aplikácia je zamknutá: nastavte premennú APP_PASSWORD v Railway Variables.",
+                            503, mimetype="text/plain; charset=utf-8")
+        return None
+    auth = request.authorization
+    if auth and auth.type == "basic" and hmac.compare_digest(auth.username or "", APP_USERNAME) \
+            and hmac.compare_digest(auth.password or "", APP_PASSWORD):
+        return None
+    return Response("Vyžaduje sa prihlásenie.", 401, {"WWW-Authenticate": 'Basic realm="Competition Checker", charset="UTF-8"'},
+                    mimetype="text/plain; charset=utf-8")
+
+
+@app.route("/healthz")
+def healthz():
+    return "ok"
 
 
 # ---------- helpers ----------
