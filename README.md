@@ -15,7 +15,9 @@ Open http://localhost:5050 (set `PORT` to use another port; avoid 5000 on macOS,
 
 ## Deploy on Railway
 
-`railway.json` makes Railway start the app with gunicorn on `0.0.0.0:$PORT`.
+`railway.json` makes Railway start the app with gunicorn; `gunicorn.conf.py` binds it to `0.0.0.0:$PORT`.
+The deploy log prints `Competition Checker listening on 0.0.0.0:<port>`. The public domain's target port
+(*Settings → Networking*) must be that same port, otherwise Railway shows "Application failed to respond".
 
 1. Push the repo and deploy it as a Railway service.
 2. **Add a volume** to the service (any mount path, e.g. `/data`). The app stores its SQLite database there
