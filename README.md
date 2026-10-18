@@ -44,7 +44,7 @@ The Railway service builds the new application from `deploy/Dockerfile`, as set 
    - `ADMIN_EMAIL` and `ADMIN_PASSWORD` for the first administrator.
 4. *Settings → Networking → Generate Domain*, target port **8080**.
 
-Each deploy runs `python -m app.cli predeploy` first: database migrations, then creates the first
+Each container start runs `python -m app.cli predeploy` before the web server: database migrations (under a database lock), then creates the first
 administrator if none exists. Health check: `/readyz` (returns 503 when the database is unreachable).
 
 ## Old application

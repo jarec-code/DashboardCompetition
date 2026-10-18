@@ -5,7 +5,9 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import get_settings
 
-engine = create_engine(get_settings().database_url, pool_pre_ping=True, pool_size=5, max_overflow=5)
+# hide_parameters: query values (e-mails, URLs) never appear in error messages and logs.
+engine = create_engine(get_settings().database_url, pool_pre_ping=True, pool_size=5, max_overflow=5,
+                       hide_parameters=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
 # Deterministic constraint names keep Alembic migrations stable.

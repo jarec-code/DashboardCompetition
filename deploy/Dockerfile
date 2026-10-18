@@ -21,5 +21,7 @@ USER app
 
 ENV PORT=8080
 EXPOSE 8080
-# Railway sets PORT; proxy headers give the real client IP for the login rate limit.
-CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]
+# Migrations and the first admin run before the server starts (guarded by a database lock), so the
+# app never serves requests against an outdated schema. Railway sets PORT; proxy headers give the
+# real client IP for the login rate limit.
+CMD ["sh", "-c", "python -m app.cli predeploy && exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]

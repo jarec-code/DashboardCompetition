@@ -3,7 +3,7 @@
   python -m app.cli migrate        apply database migrations
   python -m app.cli create-admin   create an administrator (asks for the password)
   python -m app.cli ensure-admin   create the first admin from ADMIN_EMAIL / ADMIN_PASSWORD if none exists
-  python -m app.cli predeploy      migrate + ensure-admin (Railway pre-deploy step)
+  python -m app.cli predeploy      migrate + ensure-admin (run by the container before the web server starts)
 """
 import argparse
 import getpass
@@ -12,17 +12,28 @@ import sys
 from alembic import command
 from alembic.config import Config
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.config import BACKEND_DIR, get_settings
-from app.db import SessionLocal
+from app.db import SessionLocal, engine
 from app.models import User
 from app.schemas.users import UserCreate
 from app.security import hash_password
 
+MIGRATION_LOCK_ID = 727_001  # pg advisory lock: only one process migrates at a time
+
 
 def migrate() -> None:
-    command.upgrade(Config(str(BACKEND_DIR / "alembic.ini")), "head")
+    cfg = Config(str(BACKEND_DIR / "alembic.ini"))
+    with engine.connect() as conn:
+        conn.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
+        try:
+            cfg.attributes["connection"] = conn
+            command.upgrade(cfg, "head")
+            conn.commit()
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:id)"), {"id": MIGRATION_LOCK_ID})
+            conn.commit()
 
 
 def create_admin(email: str, password: str) -> str:

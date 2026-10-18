@@ -63,3 +63,32 @@ def test_price_history_unique_per_offer_and_time():
         conn.execute(insert, {"o": offer_id})
     with pytest.raises(IntegrityError), engine.begin() as conn:
         conn.execute(insert, {"o": offer_id})
+
+
+def test_migrate_is_idempotent_and_safe_when_run_concurrently():
+    import threading
+
+    from app.cli import migrate
+
+    errors: list[Exception] = []
+
+    def run():
+        try:
+            migrate()
+        except Exception as exc:  # pragma: no cover - reported below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=run) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    migrate()
+    assert EXPECTED_TABLES <= set(inspect(engine).get_table_names())
+
+
+def test_database_errors_do_not_leak_query_parameters():
+    with pytest.raises(Exception) as exc_info, engine.connect() as conn:
+        conn.execute(text("SELECT * FROM neexistujuca_tabulka WHERE email = :e"), {"e": "tajny@example.com"})
+    assert "tajny@example.com" not in str(exc_info.value)

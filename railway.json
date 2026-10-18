@@ -5,7 +5,6 @@
     "dockerfilePath": "deploy/Dockerfile"
   },
   "deploy": {
-    "preDeployCommand": ["python -m app.cli predeploy"],
     "healthcheckPath": "/readyz",
     "healthcheckTimeout": 120,
     "restartPolicyType": "ON_FAILURE",
