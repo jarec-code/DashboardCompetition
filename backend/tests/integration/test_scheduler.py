@@ -331,3 +331,13 @@ def test_competitor_problem_after_failed_runs(client, db, site, worker):
         run_all(worker, db)
     problems = client.get("/api/monitoring").json()["problem_competitors"]
     assert [(p["name"], p["failed_runs_in_row"]) for p in problems] == [("Alter", 3)]
+
+
+def test_many_jobs_in_one_tick(db):
+    """Regression: enqueueing more than 5 jobs on one connection (prepared statement + partial index)."""
+    alter = competitor(db)
+    for i in range(15):
+        offer(db, alter, i)
+    db.commit()
+    assert scheduler.tick(db, now=NOW).jobs == 15
+    assert len([j for j in jobs(db) if j.kind == "scheduled"]) == 15

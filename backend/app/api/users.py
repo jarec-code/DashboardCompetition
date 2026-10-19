@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import func, select
 
 from app.api.deps import AdminUser, DbSession
@@ -25,7 +25,7 @@ def create_user(data: UserCreate, db: DbSession, _admin: AdminUser) -> User:
 
 
 @router.patch("/{user_id}", response_model=UserOut)
-def update_user(user_id: int, data: UserUpdate, db: DbSession, admin: AdminUser) -> User:
+def update_user(user_id: int, data: UserUpdate, request: Request, db: DbSession, admin: AdminUser) -> User:
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Používateľ neexistuje.")
@@ -39,7 +39,11 @@ def update_user(user_id: int, data: UserUpdate, db: DbSession, admin: AdminUser)
         user.role = data.role
     if data.is_active is not None:
         user.is_active = data.is_active
+    if data.password is not None or data.is_active is False:
+        user.session_version += 1  # ends the user's existing sessions
     if data.password is not None:
         user.password_hash = hash_password(data.password)
     db.commit()
+    if user.id == admin.id:
+        request.session["sv"] = user.session_version  # an admin changing their own password stays signed in
     return user

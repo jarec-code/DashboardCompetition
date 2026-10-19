@@ -14,13 +14,14 @@ from datetime import UTC, datetime
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.scraping.fetcher import Fetcher
-from app.services import alerts, scheduling
+from app.services import alerts, housekeeping, scheduling
 from app.worker import queue, scheduler
 from app.worker.processor import Processor
 
 log = logging.getLogger("worker")
 RECOVERY_INTERVAL_SECONDS = 60
 ALERTS_INTERVAL_SECONDS = 300
+CLEANUP_INTERVAL_SECONDS = 6 * 3600
 
 
 class Worker:
@@ -31,6 +32,7 @@ class Worker:
         self._last_recovery = 0.0
         self._last_tick = 0.0
         self._last_alerts = 0.0
+        self._last_cleanup = 0.0
 
     def run_once(self) -> int:
         """Housekeeping when due, then process at most one job. Returns the number of processed jobs."""
@@ -41,6 +43,12 @@ class Worker:
                     log.warning("Recovered %d abandoned job(s)", recovered)
                 scheduling.set_heartbeat(db, "worker", datetime.now(UTC))
                 db.commit()
+            if time.monotonic() - self._last_cleanup > CLEANUP_INTERVAL_SECONDS:
+                self._last_cleanup = time.monotonic()
+                removed = housekeeping.cleanup(db)
+                db.commit()
+                if any(removed.values()):
+                    log.info("Removed old diagnostic data: %s", removed)
             if time.monotonic() - self._last_alerts > ALERTS_INTERVAL_SECONDS:
                 self._last_alerts = time.monotonic()
                 alerts.evaluate_all(db)  # e.g. prices that became stale without any check

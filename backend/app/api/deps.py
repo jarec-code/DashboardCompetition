@@ -26,7 +26,7 @@ def csrf_protect(request: Request) -> None:
 def current_user(request: Request, db: DbSession) -> User:
     user_id = request.session.get("uid")
     user = db.get(User, user_id) if user_id else None
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or request.session.get("sv") != user.session_version:
         request.session.clear()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Nie ste prihlásený.")
     return user

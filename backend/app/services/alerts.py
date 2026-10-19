@@ -13,7 +13,7 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -112,46 +112,82 @@ def _check(rule: AlertRule, offer: CompetitorProduct, competitor: Competitor, pr
     return Verdict(None)
 
 
-def _rules_for(db: Session, offer: CompetitorProduct) -> list[AlertRule]:
-    return list(db.scalars(select(AlertRule).where(
-        AlertRule.enabled.is_(True),
-        or_(AlertRule.competitor_id.is_(None), AlertRule.competitor_id == offer.competitor_id),
-        or_(AlertRule.product_id.is_(None), AlertRule.product_id == offer.product_id))))
+def _applies(rule: AlertRule, offer: CompetitorProduct) -> bool:
+    return (rule.competitor_id in (None, offer.competitor_id)) and (rule.product_id in (None, offer.product_id))
 
 
-def _resolve(db: Session, rule_id: int, offer_id: int, now: datetime) -> None:
-    for alert in db.scalars(select(Alert).where(Alert.rule_id == rule_id, Alert.competitor_product_id == offer_id,
-                                                Alert.status.in_(("open", "acknowledged")))):
-        alert.status, alert.resolved_at = "resolved", now
+@dataclass
+class _Context:
+    """Everything evaluation needs, loaded once (a single offer, or all offers in bulk)."""
+    rules: list[AlertRule]
+    competitors: dict[int, Competitor]
+    products: dict[int, Product]
+    currents: dict[int, CurrentPrice]
+    active: dict[tuple[int, int], Alert]  # (rule_id, offer_id) -> open or acknowledged alert
+
+
+def _load(db: Session, offer_ids: list[int] | None) -> _Context:
+    def scoped(query, column):
+        return query if offer_ids is None else query.where(column.in_(offer_ids))
+    rules = list(db.scalars(select(AlertRule).where(AlertRule.enabled.is_(True))))
+    # also alerts of disabled rules are irrelevant here: disabling resolves them (see the API)
+    active = scoped(select(Alert).where(Alert.status.in_(("open", "acknowledged"))), Alert.competitor_product_id)
+    currents = scoped(select(CurrentPrice), CurrentPrice.competitor_product_id)
+    competitors, products = select(Competitor), select(Product)
+    if offer_ids is not None:  # one check: only the rows this offer needs, not the whole catalogue
+        offers = select(CompetitorProduct.competitor_id, CompetitorProduct.product_id).where(
+            CompetitorProduct.id.in_(offer_ids)).subquery()
+        competitors = competitors.where(Competitor.id.in_(select(offers.c.competitor_id)))
+        products = products.where(Product.id.in_(select(offers.c.product_id)))
+    return _Context(
+        rules=rules,
+        competitors={c.id: c for c in db.scalars(competitors)},
+        products={p.id: p for p in db.scalars(products)},
+        currents={c.competitor_product_id: c for c in db.scalars(currents)},
+        active={(a.rule_id, a.competitor_product_id): a for a in db.scalars(active)},
+    )
+
+
+def _evaluate(db: Session, ctx: _Context, offer: CompetitorProduct, event: Event | None, now: datetime) -> None:
+    competitor = ctx.competitors.get(offer.competitor_id)
+    inactive = offer.status == "archived" or competitor is None or competitor.status == "archived"
+    product = ctx.products.get(offer.product_id) if offer.product_id else None
+    current = ctx.currents.get(offer.id)
+    for rule in ctx.rules:
+        if not _applies(rule, offer):
+            continue
+        existing = ctx.active.get((rule.id, offer.id))
+        verdict = Verdict(False) if inactive else _check(rule, offer, competitor, product, current, event)
+        if verdict.active is True:
+            if existing is not None:  # update in place (no duplicate)
+                existing.message, existing.details = verdict.message[:500], verdict.details or {}
+                existing.last_seen_at = existing.updated_at = now
+                continue
+            stmt = insert(Alert).values(rule_id=rule.id, competitor_product_id=offer.id, alert_type=rule.rule_type,
+                                        status="open", message=verdict.message[:500], details=verdict.details or {},
+                                        last_seen_at=now, created_at=now, updated_at=now)
+            db.execute(stmt.on_conflict_do_update(  # race-safe if another process raised it meanwhile
+                index_elements=["rule_id", "competitor_product_id"],
+                # Literal predicate: with a bound parameter PostgreSQL cannot match the partial index once
+                # psycopg switches to a prepared statement (from the 5th execution on one connection).
+                index_where=text("status IN ('open', 'acknowledged')"),
+                set_={"message": stmt.excluded.message, "details": stmt.excluded.details, "last_seen_at": now,
+                      "updated_at": now}))
+        elif existing is not None and (inactive or (verdict.active is False and rule.rule_type not in EVENT_RULES)):
+            existing.status, existing.resolved_at = "resolved", now
 
 
 def evaluate_offer(db: Session, offer: CompetitorProduct, event: Event | None = None,
                    now: datetime | None = None) -> None:
-    now = now or datetime.now(UTC)
-    competitor = db.get(Competitor, offer.competitor_id)
-    inactive = offer.status == "archived" or competitor is None or competitor.status == "archived"
-    product = db.get(Product, offer.product_id) if offer.product_id else None
-    current = db.scalar(select(CurrentPrice).where(CurrentPrice.competitor_product_id == offer.id))
-    for rule in _rules_for(db, offer):
-        verdict = Verdict(False) if inactive else _check(rule, offer, competitor, product, current, event)
-        if verdict.active is True:
-            stmt = insert(Alert).values(rule_id=rule.id, competitor_product_id=offer.id, alert_type=rule.rule_type,
-                                        status="open", message=verdict.message[:500], details=verdict.details or {},
-                                        last_seen_at=now, created_at=now, updated_at=now)
-            db.execute(stmt.on_conflict_do_update(
-                index_elements=["rule_id", "competitor_product_id"],
-                index_where=Alert.status.in_(("open", "acknowledged")),
-                set_={"message": stmt.excluded.message, "details": stmt.excluded.details, "last_seen_at": now,
-                      "updated_at": now}))
-        elif verdict.active is False and rule.rule_type not in EVENT_RULES:
-            _resolve(db, rule.id, offer.id, now)
-        elif inactive:
-            _resolve(db, rule.id, offer.id, now)
+    db.flush()
+    _evaluate(db, _load(db, [offer.id]), offer, event, now or datetime.now(UTC))
 
 
 def evaluate_all(db: Session) -> int:
-    """Re-check condition rules for every offer (e.g. after our price changed, or periodically)."""
+    """Re-check condition rules for every offer (periodically, or after our price changed). Loads in bulk."""
+    ctx = _load(db, None)
+    now = datetime.now(UTC)
     offers = list(db.scalars(select(CompetitorProduct)))
     for offer in offers:
-        evaluate_offer(db, offer)
+        _evaluate(db, ctx, offer, None, now)
     return len(offers)

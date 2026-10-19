@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, true
+from sqlalchemy import Boolean, DateTime, Integer, String, true
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -19,3 +19,5 @@ class User(TimestampMixin, Base):
     role: Mapped[str] = mapped_column(String(16), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Stored in the session cookie; raising it (password change, deactivation) ends all existing sessions.
+    session_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")

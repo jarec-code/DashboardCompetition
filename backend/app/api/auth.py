@@ -1,12 +1,13 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.deps import CurrentUser, DbSession, csrf_protect
 from app.models import User
 from app.schemas.users import LoginIn, SessionOut, UserOut
-from app.security import login_limiter, new_csrf_token, verify_password
+from app.security import MIN_PASSWORD_LENGTH, hash_password, login_limiter, new_csrf_token, verify_password
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -36,6 +37,7 @@ def login(data: LoginIn, request: Request, db: DbSession) -> SessionOut:
     db.commit()
     request.session.clear()  # new session on login (prevents session fixation)
     request.session["uid"] = user.id
+    request.session["sv"] = user.session_version
     return _session_out(request, user)
 
 
@@ -47,3 +49,19 @@ def logout(request: Request, _user: CurrentUser) -> None:
 @router.get("/me", response_model=SessionOut)
 def me(request: Request, user: CurrentUser) -> SessionOut:
     return _session_out(request, user)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=256)
+
+
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT, dependencies=[Depends(csrf_protect)])
+def change_password(data: PasswordChange, request: Request, db: DbSession, user: CurrentUser) -> None:
+    """Any user changes their own password; all their other sessions end."""
+    if not verify_password(user.password_hash, data.current_password):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Súčasné heslo nie je správne.")
+    user.password_hash = hash_password(data.new_password)
+    user.session_version += 1
+    db.commit()
+    request.session["sv"] = user.session_version  # this session stays signed in

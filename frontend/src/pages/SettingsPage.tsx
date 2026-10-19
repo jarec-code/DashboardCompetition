@@ -11,6 +11,7 @@ import { api } from "../api/client";
 import type { Role, User } from "../api/types";
 import { useSession } from "../auth/auth";
 import { AlertRulesSection } from "./AlertRulesSection";
+import { PasswordSection } from "./PasswordSection";
 import { SchedulingSettingsSection } from "./SchedulingSettings";
 
 const USERS_KEY = ["users"] as const;
@@ -133,6 +134,7 @@ export function SettingsPage() {
           <Text>Prihlásený ako {session.user.email}. Nastavenia môže meniť iba administrátor.</Text>
         </Paper>
       )}
+      <PasswordSection />
       <SchedulingSettingsSection readOnly={session.user.role !== "admin"} />
       <AlertRulesSection readOnly={session.user.role !== "admin"} />
     </Stack>

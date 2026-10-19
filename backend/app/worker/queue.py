@@ -7,7 +7,7 @@
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -33,7 +33,9 @@ def enqueue(db: Session, competitor_id: int, kind: str, offer_id: int | None = N
         db.flush()
         return job
     job_id = db.scalar(insert(ScrapeJob).values(**values).on_conflict_do_nothing(
-        index_elements=["competitor_product_id"], index_where=ScrapeJob.status.in_(("pending", "running")))
+        index_elements=["competitor_product_id"],
+        # Literal predicate: a bound parameter breaks partial-index inference for prepared statements.
+        index_where=text("status IN ('pending', 'running')"))
         .returning(ScrapeJob.id))
     if job_id is None:  # an open job exists: a manual request moves it to the front
         job = db.scalars(select(ScrapeJob).where(ScrapeJob.competitor_product_id == offer_id,

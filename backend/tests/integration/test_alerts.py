@@ -199,3 +199,22 @@ def test_worker_raises_price_drop_alert(db, monkeypatch):
             pass
     [alert] = active(db)
     assert alert.alert_type == "price_drop" and "44.00 CZK → 39.00 CZK" in alert.message
+
+
+def test_many_alerts_on_one_connection(db):
+    """Regression: from the 5th execution psycopg uses a prepared statement; the ON CONFLICT clause
+    must still match the partial unique index (it failed with a bound-parameter predicate)."""
+    _, competitor, _ = setup(db, rules=(("cheaper_than_us", {"percent": 0}),))
+    product = db.scalar(select(Product))
+    for i in range(12):
+        offer = CompetitorProduct(competitor_id=competitor.id, product_id=product.id, match_status="matched",
+                                  matching_method="manual", product_url=f"https://www.alter.cz/produkt/{i + 2}")
+        db.add(offer)
+        db.flush()
+        db.add(CurrentPrice(competitor_product_id=offer.id, price=Decimal("50"), currency="CZK", vat_mode="with_vat",
+                            availability="in_stock", last_success_at=datetime.now(UTC)))
+    db.commit()
+    for _ in range(2):  # twice: the second run updates instead of duplicating
+        alerts.evaluate_all(db)
+        db.commit()
+    assert len(active(db, "cheaper_than_us")) == 12

@@ -48,12 +48,27 @@ app.add_middleware(SessionMiddleware, secret_key=settings.secret_key, session_co
                    max_age=settings.session_max_age_seconds, same_site="lax", https_only=settings.is_production)
 
 
+# Only our own scripts; Mantine injects style tags, hence 'unsafe-inline' for styles only.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+       "connect-src 'self'; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+
+
+@app.exception_handler(Exception)
+async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
+    """Details go to the server log only; the client gets a generic message without a stack trace."""
+    logging.getLogger("app").exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse({"detail": "Neočakávaná chyba servera. Skúste to znova neskôr."}, status_code=500)
+
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    if not request.url.path.startswith("/api/docs"):  # Swagger UI (development only) loads its own assets
+        response.headers.setdefault("Content-Security-Policy", CSP)
     if settings.is_production:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
     return response
