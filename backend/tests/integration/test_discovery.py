@@ -224,14 +224,15 @@ def test_generic_site_without_sitemap_is_crawled_from_the_catalogue(db):
         "/": (200, '<a href="/kontakt">Kontakt</a> <a href="/katalog">Katalog učebnic</a>'),
         "/katalog": (200, cards + '<a rel="next" href="/katalog?strana=2">další</a>'),
         "/katalog?strana=2": (200, '<div class="card"><a href="/produkt/15">Kniha 15</a></div>'),
-        **{f"/produkt/{n}": (200, jsonld_page(f"Kniha {n}", "100")) for n in range(1, 16)},
+        **{f"/produkt/{n}": (200, jsonld_page(f"Kniha {n}", str(100 + n))) for n in range(1, 16)},
     })
     run = run_all(db, site)
     assert run.status == "succeeded" and run.stats["detected"] == "crawl"
     assert run.stats["found"] == 15 and run.stats["products_read"] == 15  # pagination followed, details read
     assert site.requests.count("/produkt/1") == 1  # every page once
     attempts = [a["what"] for a in run.stats["attempts"]]
-    assert attempts == ["robots.txt", "/sitemap.xml", "domovská stránka", "crawler"]
+    assert attempts == ["robots.txt", "/sitemap.xml", "domovská stránka", "plán", "prechádzanie webu"]
+    assert run.stats["methods"]["crawl"]["sufficient"] is True
     item = db.scalar(select(CatalogItem).where(CatalogItem.key == "https://knihy.example.cz/produkt/3"))
     assert (item.found_by, item.fetch_status, item.parsed_by, item.completeness) == ("crawl", "ok", "jsonld", 70)
 
@@ -412,8 +413,9 @@ def test_an_empty_source_falls_back_to_the_crawler(db):
         "/produkt/2": (200, jsonld_page("Kniha 2", "120")),
     })
     run = run_all(db, site)
-    assert run.status == "succeeded" and run.stats["fell_back"] is True and run.stats["found"] == 2
-    assert run.stats["attempts"][-1]["what"] == "zdroj sitemap"
+    assert run.status == "succeeded" and run.stats["plan"] == ["sitemap", "crawl"] and run.stats["found"] == 2
+    assert run.stats["methods"]["sitemap"]["sufficient"] is False and run.stats["methods"]["crawl"]["found"] == 2
+    assert "pokračuje prechádzanie webu" in next(a["result"] for a in run.stats["attempts"] if a["what"] == "sitemap")
 
 
 def test_diagnostics_api(client, db):
@@ -431,3 +433,92 @@ def test_diagnostics_api(client, db):
     items = client.get(f"/api/competitors/{c.id}/catalog", params={"match_status": "unrelated"}).json()["items"]
     assert items and items[0]["found_by"] == "crawl" and items[0]["completeness"] == 85
     assert client.get(f"/api/competitors/{c.id}/catalog", params={"incomplete": True}).json()["total"] == 0
+
+
+def bookshop(prices: list[int], sitemap: list[int] | None = None, home_extra: str = "") -> FakeSite:
+    """A shop with books /kniha/N, a home page linking all of them, and optionally a sitemap of some books."""
+    pages = {"/robots.txt": (200, "User-agent: *\n" + ("Sitemap: https://knihy.example.cz/sitemap.xml\n"
+                                                         if sitemap else "")),
+             "/": (200, "".join(f'<a href="/kniha/{n}">Kniha {n}</a>' for n in range(1, len(prices) + 1)) + home_extra),
+             **{f"/kniha/{n}": (200, jsonld_page(f"Kniha {n}", str(p))) for n, p in enumerate(prices, start=1)}}
+    if sitemap:
+        pages["/sitemap.xml"] = (200, '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/'
+                                      'sitemap/0.9">' + "".join(f"<url><loc>https://knihy.example.cz/kniha/{n}</loc>"
+                                                                f"</url>" for n in sitemap) + "</urlset>")
+    return FakeSite(pages)
+
+
+def test_diagnosis_is_reused_and_renewed_after_thirty_days(db):
+    c = competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
+    site = bookshop([100 + n for n in range(8)])
+    run_all(db, site)
+    diagnosis = settings_of(db, c).diagnosis
+    assert diagnosis["chosen"] == ["crawl"] and diagnosis["stale"] is False and diagnosis["quality"]["found"] == 8
+
+    site.requests.clear()
+    request_again(db, c)
+    run = run_all(db, site)
+    assert "/sitemap.xml" not in site.requests and "detect" not in run.stats  # no new detection
+    assert run.stats["plan"] == ["crawl"]
+
+    site.requests.clear()
+    request_again(db, c)
+    run = run_all(db, site, now=datetime.now(UTC) + timedelta(days=31))
+    assert "/sitemap.xml" in site.requests and run.stats["detect"]  # detected anew
+
+
+def test_insufficient_sitemap_is_combined_with_the_crawler(db):
+    competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
+    # The sitemap lists five books, all with the same price: a wrong price on the website or a wrong parser.
+    site = bookshop([99, 99, 99, 99, 99, 150, 160, 170], sitemap=[1, 2, 3, 4, 5])
+    run = run_all(db, site)
+    assert run.stats["plan"] == ["sitemap", "crawl"]
+    assert run.stats["methods"]["sitemap"]["sufficient"] is False
+    assert "vierohodné" in run.stats["methods"]["sitemap"]["reason"]
+    assert run.stats["found"] == 8 and run.status == "succeeded"  # both methods together
+    assert settings_of(db, db.scalar(select(Competitor))).diagnosis["chosen"] == ["sitemap", "crawl"]
+
+
+def test_recipe_forced_crawler_patterns_and_shop_on_another_domain(db):
+    c = competitor(db, "SPN", "https://spn.example.cz/", "spn.example.cz")
+    shop_links = "".join(f'<a href="https://obchod.example.cz/titul/{n}">Titul {n}</a>' for n in range(1, 13))
+    site = FakeSite({
+        "/robots.txt": (200, "User-agent: *\n"),
+        "/": (200, '<a href="/o-nas">O nás</a>' + shop_links),
+        "/o-nas": (200, "<h1>O nás</h1>"),
+        **{f"/titul/{n}": (200, jsonld_page(f"Titul {n}", str(80 + n))) for n in range(1, 13)},
+        "/titul/1?tisk=1": (200, jsonld_page("Titul 1", "81")),
+    })
+    run = run_all(db, site)
+    assert not any(r.startswith("/titul/") for r in site.requests)  # another domain: never without the recipe
+    assert "obchod.example.cz" in run.stats["suggestions"][0]
+
+    recipe = discovery.Recipe(strategy="crawl", entry_urls=["https://obchod.example.cz/"],
+                              extra_domains=["obchod.example.cz"], exclude_patterns=["^/o-nas"],
+                              product_pattern=r"^/titul/\d+$")
+    settings = settings_of(db, c).model_copy(update={**recipe.model_dump(), "source": None, "diagnosis": {},
+                                                     "run_requested": True})
+    discovery.save(c.scrape_config, settings)
+    db.commit()
+    site.requests.clear()
+    run = run_all(db, site)
+    assert run.stats["plan"] == ["crawl"] and run.stats["found"] == 12 and run.status == "succeeded"
+    assert "/o-nas" not in site.requests and "/sitemap.xml" not in site.requests
+
+
+def test_recipe_api_validates_and_renews_the_diagnosis(client, db):
+    from tests.conftest import login, make_user
+
+    make_user("admin@example.com")
+    login(client, "admin@example.com")
+    c = competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
+    run_all(db, bookshop([100 + n for n in range(6)]))
+    url = f"/api/competitors/{c.id}/discovery"
+    assert client.get(url).json()["settings"]["diagnosis"]["chosen"] == ["crawl"]
+    body = {"mode": "shadow", "terms_confirmed": True}
+    assert client.put(url, json={**body, "recipe": {"include_patterns": ["(["]}}).status_code == 422
+    assert client.put(url, json={**body, "recipe": {"extra_domains": ["nie je domena"]}}).status_code == 422
+    state = client.put(url, json={**body, "recipe": {"strategy": "crawl", "extra_domains": ["https://www.Shop.cz/x"],
+                                                      "drop_params": ["Sort"]}}).json()["settings"]
+    assert (state["strategy"], state["extra_domains"], state["drop_params"]) == ("crawl", ["shop.cz"], ["sort"])
+    assert state["diagnosis"] == {} and state["source"] is None  # found and judged anew

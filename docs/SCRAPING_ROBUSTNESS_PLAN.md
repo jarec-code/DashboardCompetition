@@ -1,6 +1,7 @@
 # Analýza a plán: robustné načítavanie produktov z webov konkurencie
 
-Stav: **schválené 19. 10. 2026; etapy 1 a 2 implementované** (kapitola 14). Etapy 3–5 čakajú.
+Stav: **schválené 19. 10. 2026; etapy 1–4 implementované** (kapitoly 14 a 15). Etapa 5 (prehliadač) čaká
+na konkrétny web, ktorý ju bude potrebovať.
 
 Dokument oddeľuje **potvrdené zistenia** (✔ overené na produkčných dátach, na webe alebo na kóde) od
 **predpokladov** (❓ treba overiť v implementácii).
@@ -460,3 +461,57 @@ Očakávané výsledky po etapách 1 a 2:
 **Odchýlka:** web bez sitemapy sa už nečíta ako „zoznam s ďalšou stranou“, ale crawlerom od katalógu. Počet
 požiadaviek je rovnaký (detaily sa aj predtým načítavali jednotlivo), výsledok je úplnejší: prejdú sa aj
 kategórie a série.
+
+---
+
+## 15. Implementácia etáp 3 a 4 (19. 10. 2026)
+
+**Etapa 3: výber a kombinovanie spôsobov** (`app/services/discovery.py`)
+- `Runner._detect_url` / `_make_plan`: detekcia zostaví plán, najlacnejšie spôsoby prvé.
+  - Adaptér webu sa použije sám.
+  - Inak feed (ak je v recepte) → sitemap (z robots.txt alebo `/sitemap.xml`) → prechádzanie webu (vždy posledné).
+  - Nepotrebné kroky detekcie sa preskočia bez požiadavky.
+- `quality_of`: metriky výsledku spôsobu.
+  - Počet produktov s cenou a podiel s cenou (min. 80 %), s názvom (min. 95 %) a s vierohodnou cenou (min. 90 %;
+    1–20 000 a nie všetky rovnaké).
+  - Menej ako 5 produktov je iba poznámka, nie chyba.
+- `_evaluate_method`: po každom spôsobe (zoznam + načítanie detailov) sa výsledok ohodnotí. Nedostatočný
+  spôsob nespôsobí chybu, beh pokračuje ďalším spôsobom a výsledky sa zlúčia (rovnaká URL = jedna položka).
+  Porovnanie so stavom (nové, zmiznuté) sa robí až po všetkých spôsoboch.
+- Sitemap, ktorá ani po 15 načítaných stránkach nevedie na produkt, sa opustí a pokračuje sa ďalším spôsobom.
+- `_save_diagnosis`: uložia sa spôsoby, ktoré priniesli produkty (až po prvý dostatočný), ich zdroje,
+  hodnotenia, návrhy a celková kvalita.
+  - Ďalšie behy diagnózu použijú bez novej detekcie.
+  - Nová detekcia nastane po 30 dňoch, pri nedostatočnej kvalite, po zmene receptu alebo po „Rozpoznať znova“.
+- Beh s nedostatočnou celkovou kvalitou má stav „čiastočne“ s dôvodom.
+- `_shop_domain_hint`: ak domovská stránka vedie aspoň 10 odkazmi na inú doménu (okrem sociálnych sietí a máp),
+  diagnóza navrhne pridať ju do receptu. Automaticky sa nepridáva, lebo treba skontrolovať podmienky toho webu.
+  Príklad: SPN → naseucebnice.cz.
+
+**Etapa 4: recept webu**
+- Nastavenia: vynútený spôsob (`strategy`), adresa feedu, vstupné stránky, ďalšie domény, vzory
+  „prechádzať iba“ a „nikdy“, vzor adresy produktu a ignorované parametre adries. Validuje sa v API (`Recipe`):
+  regulárne výrazy, adresy aj domény.
+- Crawler vzory uplatňuje (`crawl.page_links`, `crawl.product_like`). Sitemap používa vzor produktu.
+- UI: v záložke Katalóg konkurenta pribudla sekcia „Recept webu“. Panel „Diagnostika zdroja“ ukazuje:
+  - tabuľku spôsobov s hodnotením a označením „používa sa“,
+  - dátum rozpoznania,
+  - návrhy (napr. doména obchodu).
+
+**Testy:**
+- Opätovné použitie diagnózy a nová detekcia po 30 dňoch.
+- Sitemap s nevierohodnými cenami doplnená prechádzaním webu (oba spôsoby v diagnóze).
+- Obchod na inej doméne: bez receptu sa nečíta, objaví sa návrh; s receptom (vynútené prechádzanie, ďalšia
+  doména, vzory) sa nájdu všetky produkty a vylúčené stránky sa nenačítajú.
+- Validácia receptu v API a nová detekcia po jeho zmene.
+- Spolu: backend 376, Vitest 4, e2e 31.
+
+**Ako na SPN (návrh, ❓ obchod na naseucebnice.cz ešte nebol overený):**
+1. Skontrolovať podmienky webu naseucebnice.cz.
+2. V recepte SPN pridať doménu `naseucebnice.cz` a vstupnú stránku `https://www.naseucebnice.cz/`.
+3. Spustiť beh.
+
+Ak je obchod vykresľovaný JavaScriptom, diagnóza to ukáže (žiadne produkty) a bude to prvý kandidát na etapu 5.
+
+**Prodos:** po uplynutí pauzy (26. 10.) sitemap preskočí neproduktové typy stránok. Ak sa 403 zopakuje, ide
+o blokovanie zo strany webu a objavovanie sa opäť pozastaví (ochrana sa neobchádza).

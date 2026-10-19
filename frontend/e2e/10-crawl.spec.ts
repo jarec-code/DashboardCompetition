@@ -44,6 +44,9 @@ test("web bez sitemap a štruktúrovaných dát sa prejde crawlerom", async ({ p
   await expect(diagnostics.getByText(/katalóg: https:\/\/prom\.e2e\.test\/prom\/index\.php\?zobraz=katalog/)).toBeVisible();
   await expect(diagnostics.getByText("/prom/index.php?id_katalog={N}&zobraz=detail")).toBeVisible();
   await expect(diagnostics.getByText(/dosiahnutý limit 25 stránok/).first()).toBeVisible();
+  await expect(diagnostics.getByText("používa sa")).toBeVisible();  // the crawler, chosen by the diagnosis
+  await page.getByRole("button", { name: "Recept webu" }).click();
+  await expect(page.getByRole("textbox", { name: "Spôsob načítania" }).or(page.getByRole("combobox", { name: "Spôsob načítania" }))).toBeVisible();
 
   await page.getByText(/^Spárované \(\d+\)$/).click();
   const row = page.getByRole("table").last().locator("tbody tr").filter({ hasText: "Stereometrie – také E-KNIHA" });

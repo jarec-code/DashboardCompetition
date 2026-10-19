@@ -63,9 +63,20 @@ SHADOW_RETRY_HOURS = 24          # the second shadow run comes a day after the f
 MIN_PRICED_SHARE = 0.9           # quality needed to leave the shadow mode
 MAX_COUNT_CHANGE = 0.2           # … and a stable number of products between runs
 SUSPICIOUS_DROP = 0.5            # fewer than half of last run's products: stop instead of marking them gone
+DIAGNOSIS_DAYS = 30              # the chosen methods are tried anew after this
+EARLY_SAMPLE = 15                # pages of a sitemap read before it is judged (no product: next method)
+# When the result of a method is sufficient (docs/SCRAPING_ROBUSTNESS_PLAN.md, part 6)
+MIN_PRICED = 0.8
+MIN_TITLED = 0.95
+MIN_PLAUSIBLE = 0.9
+FEW_PRODUCTS = 5
+PLAUSIBLE_PRICE = (Decimal("1"), Decimal("20000"))
+SHOP_HINT_LINKS = 10             # links from the home page to another domain that suggest a shop there
 MIN_LISTING_LINKS = 12           # a page with at least this many product links is a product listing
 MAX_LIST_PAGES = 300
 MAX_DETECT_CANDIDATES = 3
+METHOD_NAMES = {"adapter": "adaptér webu", "feed": "produktový feed", "sitemap": "sitemap",
+                "listing": "zoznam produktov", "crawl": "prechádzanie webu"}
 CATALOG_WORDS = ("shop", "eshop", "e-shop", "obchod", "katalog", "produkty", "products", "ucebnice", "knihy",
                  "sortiment", "nabidka", "ponuka", "vsechny", "vsetky")
 
@@ -120,9 +131,18 @@ class DiscoverySettings(BaseModel):
     max_pages: int = Field(default=400, ge=10, le=20000)   # pages read by one run
     max_depth: int = Field(default=4, ge=1, le=10)         # link steps from an entry page
     max_run_days: int = Field(default=14, ge=1, le=60)     # a run spread over nights ends after this
+    # recipe of the website, entered by an administrator when automatic detection is not enough (part 5.4)
+    strategy: Literal["auto", "adapter", "feed", "sitemap", "crawl"] = "auto"  # forced method
+    feed_url: str | None = Field(default=None, max_length=2048)
+    entry_urls: list[str] = Field(default_factory=list, max_length=20)    # where the crawler starts
     extra_domains: list[str] = Field(default_factory=list, max_length=10)  # e.g. a shop on another domain
+    include_patterns: list[str] = Field(default_factory=list, max_length=20)  # regex: only these URLs
+    exclude_patterns: list[str] = Field(default_factory=list, max_length=20)  # regex: never these URLs
+    product_pattern: str | None = Field(default=None, max_length=300)       # regex: product pages
     drop_params: list[str] = Field(default_factory=list, max_length=50)   # URL parameters to ignore
     learned_templates: dict[str, dict[str, int]] = Field(default_factory=dict)  # yield per URL template
+    # diagnosis: which methods were tried, with what quality, which ones are used (part 6)
+    diagnosis: dict[str, Any] = Field(default_factory=dict)
     # state, kept by the runner
     run_requested: bool = False
     next_run_at: datetime | None = None
@@ -134,6 +154,73 @@ class DiscoverySettings(BaseModel):
     shadow_ok_runs: int = 0
     budget_date: str | None = None
     budget_used: int = 0
+
+
+def _regex(value: str) -> str:
+    try:
+        re.compile(value)
+    except re.error:
+        raise ValueError(f"Neplatný regulárny výraz: {value}") from None
+    return value
+
+
+class Recipe(BaseModel):
+    """The editable part of a website's recipe (validated input of the API)."""
+    strategy: Literal["auto", "adapter", "feed", "sitemap", "crawl"] = "auto"
+    feed_url: str | None = Field(default=None, max_length=2048)
+    entry_urls: list[str] = Field(default_factory=list, max_length=20)
+    extra_domains: list[str] = Field(default_factory=list, max_length=10)
+    include_patterns: list[str] = Field(default_factory=list, max_length=20)
+    exclude_patterns: list[str] = Field(default_factory=list, max_length=20)
+    product_pattern: str | None = Field(default=None, max_length=300)
+    drop_params: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("feed_url")
+    @classmethod
+    def feed(cls, value: str | None) -> str | None:
+        if not value or not value.strip():
+            return None
+        try:
+            return normalize_url(value)
+        except InvalidUrl as exc:
+            raise ValueError(str(exc)) from None
+
+    @field_validator("entry_urls")
+    @classmethod
+    def entries(cls, values: list[str]) -> list[str]:
+        try:
+            return [normalize_url(v) for v in values if v.strip()]
+        except InvalidUrl as exc:
+            raise ValueError(str(exc)) from None
+
+    @field_validator("extra_domains")
+    @classmethod
+    def domains(cls, values: list[str]) -> list[str]:
+        result = []
+        for value in (v.strip().lower() for v in values if v.strip()):
+            host = urlsplit(value if "://" in value else f"https://{value}").hostname or ""
+            if "." not in host:
+                raise ValueError(f"Neplatná doména: {value}")
+            result.append(host.removeprefix("www."))
+        return result
+
+    @field_validator("include_patterns", "exclude_patterns")
+    @classmethod
+    def patterns(cls, values: list[str]) -> list[str]:
+        return [_regex(v) for v in values if v.strip()]
+
+    @field_validator("product_pattern")
+    @classmethod
+    def product(cls, value: str | None) -> str | None:
+        return _regex(value) if value and value.strip() else None
+
+    @field_validator("drop_params")
+    @classmethod
+    def params(cls, values: list[str]) -> list[str]:
+        return [v.strip().lower() for v in values if v.strip()]
+
+
+RECIPE_FIELDS = tuple(Recipe.model_fields)
 
 
 def load(config: ScrapeConfig) -> DiscoverySettings:
@@ -199,10 +286,28 @@ def _start_due_runs(db: Session, now: datetime) -> None:
             continue
         if manual:
             settings.paused_until, settings.run_requested = None, False
+        source = settings.source
+        # A valid diagnosis (or a source entered by hand) is used as it is; otherwise the methods are found anew.
+        ready = source is not None and (kind == "prices" or not source.detected or diagnosis_valid(settings, now))
+        plan, sources = [], {}
+        if ready and source.detected and kind == "discovery":
+            plan = list(settings.diagnosis.get("chosen") or [source.type])
+            sources = dict(settings.diagnosis.get("sources") or {})
+        if ready and (not plan or source.type not in sources):
+            plan = plan or [source.type]
+            sources = {**sources, source.type: {"urls": source.urls, "pattern": source.pattern,
+                                                "adapter": source.adapter}}
+        if ready and plan[0] != source.type:  # the run starts with the first chosen method
+            first = sources[plan[0]]
+            source = DiscoverySource(type=plan[0], urls=first["urls"], pattern=first.get("pattern"),
+                                     adapter=first.get("adapter"), detected=True)
+            settings.source = source
         run = DiscoveryRun(competitor_id=competitor.id, kind=kind, mode=settings.mode, status="running",
-                           phase="list" if settings.source else "detect", stats={"manual": manual},
-                           source_type=settings.source.type if settings.source else None,
-                           queue=list(settings.source.urls) if settings.source else [], started_at=now)
+                           phase="list" if ready else "detect",
+                           stats={"manual": manual, "plan": plan, "sources": sources,
+                                  "current": source.type if ready else None},
+                           source_type=source.type if ready else None,
+                           queue=list(source.urls) if ready else [], started_at=now)
         db.add(run)
         db.flush()
         settings.last_run_id = run.id if kind == "discovery" else settings.last_run_id
@@ -307,7 +412,8 @@ class Runner:
     def _next_url(self) -> str | None:
         phase = self.run.phase
         if phase == "detect":
-            return self._detect_url()
+            url = self._detect_url()
+            return url if url is not None or self.run.phase == "detect" else self._next_url()
         if phase == "list":
             if self.settings.source and self.settings.source.type == "crawl":
                 row = self._crawl_next()
@@ -326,7 +432,7 @@ class Runner:
                 return
             if self.run.phase == "detect":
                 self._detect_with(url)
-            elif self.run.phase == "list" and self.settings.source.type == "crawl":
+            elif self.run.phase == "list" and self.settings.source.type == "crawl":  # the crawler
                 self._crawl_page(url)
             elif self.run.phase == "list":
                 self._list_page(url)
@@ -340,21 +446,19 @@ class Runner:
         if self.run.phase == "list":
             if self.run.kind == "prices":
                 self._finish_prices()
-            elif not self.run.seen_keys and self._may_fall_back():
-                self._fall_back_to_crawl("zdroj nevrátil žiadne produkty")
             else:
-                self._reconcile()
                 self.run.phase = "enrich"
         elif self.run.phase == "enrich":
+            if self._evaluate_method():
+                return  # the next method of the plan continues
+            self._reconcile()
             self.run.phase = "done"
             self._match()
             if self.settings.mode == "auto":
                 self._track()
             self._finish_discovery()
-        elif self.run.phase == "detect":  # no sitemap: the crawler reads the website from its entry pages
-            candidates = list(self._detect_state().get("candidates", []))
-            self._attempt("crawler", f"vstupné stránky: {', '.join(candidates) or 'domovská stránka'}")
-            self._use_source(SourceSpec("crawl", list(dict.fromkeys(candidates + [self.competitor.base_url]))))
+        elif self.run.phase == "detect":
+            self._make_plan()
 
     def _request_failed(self, url: str, exc: FetchError) -> None:
         blocked = exc.status in (403, 429) or "botom" in str(exc)
@@ -367,7 +471,7 @@ class Runner:
             if item is not None:
                 self._enriched(item, error=str(exc), status="failed")
             return
-        crawling = self.run.phase == "list" and self.settings.source and self.settings.source.type == "crawl"
+        crawling = self.run.phase == "list" and self.run.stats.get("current") == "crawl"
         if crawling:
             row = self._row(url)
             if row is not None:
@@ -397,46 +501,105 @@ class Runner:
         self._save()
         log.warning("Discovery run %s stopped: %s", self.run.id, message)
 
-    # ----- B: detecting the source -----
+    # ----- B: detecting the methods (docs/SCRAPING_ROBUSTNESS_PLAN.md, part 6) -----
 
     def _detect_state(self) -> dict:
         return dict(self.run.stats.get("detect") or {"step": 0})
 
     def _detect_url(self) -> str | None:
+        """Requests of the detection: (robots.txt) → /sitemap.xml → home page; steps that are not needed are
+        skipped. Returns None when the detection is complete (then the plan of methods is made)."""
         state = self._detect_state()
         base = self.competitor.base_url
-        adapter = catalog.adapter_for(self.competitor.domain)
-        if adapter is not None and state["step"] == 0:
-            self._use_source(SourceSpec("adapter", [urljoin(base, u) for u in adapter.start_urls],
-                                        adapter=adapter.name))
-            return self._next_url()
-        # step 0 reads the sitemaps announced in robots.txt (already loaded, no request of its own)
-        steps = [base, urljoin(base, "/sitemap.xml"), base]
-        index = state["step"]
-        return steps[index] if index < len(steps) else None
+        strategy = self.settings.strategy
+        while True:
+            step = state["step"]
+            if step == 0:
+                adapter = catalog.adapter_for(self.competitor.domain)
+                if strategy == "adapter" or (strategy == "auto" and adapter is not None):
+                    self._make_plan()
+                    return None
+                if strategy in ("feed", "crawl"):
+                    state["step"] = 2 if strategy == "crawl" else 3
+                    self._set_stats(detect=state)
+                    continue
+                return base  # robots.txt (loaded first) and its sitemaps
+            if step == 1:
+                if state.get("sitemaps") or strategy not in ("auto", "sitemap"):
+                    state["step"] = 2
+                    self._set_stats(detect=state)
+                    continue
+                return urljoin(base, "/sitemap.xml")
+            if step == 2:
+                if strategy == "sitemap":
+                    state["step"] = 3
+                    self._set_stats(detect=state)
+                    continue
+                return base
+            return None
 
-    def _use_source(self, spec: SourceSpec) -> None:
-        self.settings.source = DiscoverySource(type=spec.type, urls=spec.urls[:20], pattern=spec.pattern,
-                                               adapter=spec.adapter, detected=True)
-        self.run.source_type, self.run.phase, self.run.queue = spec.type, "list", list(spec.urls)
-        self._set_stats(detected=spec.type)
+    def _make_plan(self) -> None:
+        """The methods to try, cheapest first: adapter or feed, sitemap, then the crawler (always last).
+        A method of the recipe ("strategy") is used alone."""
+        state = self._detect_state()
+        strategy, base = self.settings.strategy, self.competitor.base_url
+        sources: dict[str, dict] = {}
+        adapter = catalog.adapter_for(self.competitor.domain)
+        if adapter is not None and strategy in ("auto", "adapter"):
+            sources["adapter"] = {"urls": [urljoin(base, u) for u in adapter.start_urls], "adapter": adapter.name}
+        elif strategy == "adapter":
+            raise Stop("Pre tento web nie je adaptér. V recepte zvoľte iný spôsob.", status="failed")
+        else:
+            if self.settings.feed_url and strategy in ("auto", "feed"):
+                sources["feed"] = {"urls": [self.settings.feed_url]}
+            if state.get("sitemaps") and strategy in ("auto", "sitemap"):
+                sources["sitemap"] = {"urls": state["sitemaps"][:5], "pattern": self.settings.product_pattern}
+            if strategy in ("auto", "crawl"):
+                entries = self.settings.entry_urls + list(state.get("candidates", [])) + [base]
+                sources["crawl"] = {"urls": list(dict.fromkeys(entries))[:20]}
+        if not sources:
+            missing = {"feed": "adresu feedu v recepte", "sitemap": "sitemap (web ju nemá)"}.get(strategy, "zdroj")
+            raise Stop(f"Zvolený spôsob „{strategy}“ nemožno použiť: chýba {missing}.", status="failed")
+        plan = list(sources)
+        self._set_stats(plan=plan, sources=sources)
+        self._attempt("plán", " → ".join(METHOD_NAMES[m] for m in plan))
+        self._start_method(plan[0])
+
+    def _start_method(self, name: str) -> None:
+        source = self.run.stats["sources"][name]
+        self.settings.source = DiscoverySource(type=name, urls=source["urls"], pattern=source.get("pattern"),
+                                               adapter=source.get("adapter"), detected=True)
+        self.run.source_type, self.run.phase, self.run.queue = name, "list", list(source["urls"])
+        self._set_stats(current=name, detected=self.run.stats.get("detected") or name)
         self._save()
+
+    def _evaluate_method(self) -> bool:
+        """Quality of the method just finished; when it is not sufficient, start the next one of the plan.
+        Returns True when another method continues."""
+        name = self.run.stats.get("current") or (self.settings.source.type if self.settings.source else None)
+        if name is None:
+            return False
+        seen = set(self.run.seen_keys)
+        items = [i for i in self.db.scalars(select(CatalogItem).where(
+            CatalogItem.competitor_id == self.competitor.id, CatalogItem.found_by == name)) if i.key in seen]
+        result = quality_of(items)
+        results = {**(self.run.stats.get("methods") or {}), name: result}
+        self._set_stats(methods=results)
+        plan = list(self.run.stats.get("plan") or [name])
+        following = plan[plan.index(name) + 1:] if name in plan else []
+        if result["sufficient"] or not following:
+            self._attempt(METHOD_NAMES.get(name, name), _describe_quality(result))
+            return False
+        self._attempt(METHOD_NAMES.get(name, name),
+                      f"{_describe_quality(result)}; pokračuje {METHOD_NAMES[following[0]]}")
+        self._start_method(following[0])
+        return True
 
     def _attempt(self, what: str, result: str) -> None:
         """Diagnostics: what was tried to find the products, and with what result."""
         attempts = list(self.run.stats.get("attempts") or [])
         attempts.append({"what": what, "result": result[:300]})
         self._set_stats(attempts=attempts[-30:])
-
-    def _may_fall_back(self) -> bool:
-        source = self.settings.source
-        return (self.run.kind == "discovery" and source is not None and source.detected
-                and source.type in ("sitemap", "listing") and not self.run.stats.get("fell_back"))
-
-    def _fall_back_to_crawl(self, reason: str) -> None:
-        self._attempt(f"zdroj {self.settings.source.type}", f"{reason}; pokračuje prechádzanie webu")
-        self._set_stats(fell_back=True)
-        self._use_source(SourceSpec("crawl", [self.competitor.base_url]))
 
     def _detect_with(self, url: str) -> None:
         state = self._detect_state()
@@ -447,8 +610,8 @@ class Runner:
         if step == 0:  # sitemaps announced in robots.txt
             sitemaps = [s for s in self.fetcher.sitemaps(self.competitor.base_url) if catalog._belongs(s, domain)]
             self._attempt("robots.txt", f"sitemap: {', '.join(sitemaps)}" if sitemaps else "bez sitemap")
-            if sitemaps:
-                self._use_source(SourceSpec("sitemap", sitemaps[:5]))
+            state["sitemaps"] = sitemaps
+            self._set_stats(detect=state)
             return
         try:
             response = self._fetch(url, max_bytes=5 * 1024 * 1024)
@@ -466,16 +629,21 @@ class Runner:
                 return
             if result.items or result.next_urls:
                 self._attempt("/sitemap.xml", f"{len(result.items) or len(result.next_urls)} záznamov")
-                self._use_source(SourceSpec("sitemap", [response.url]))
+                state["sitemaps"] = [response.url]
+                self._set_stats(detect=state)
             return
-        # The home page: links that look like the catalogue become entry pages of the crawler, which reads
-        # listings, their categories and pagination, and the product pages (this ends detection).
+        # The home page: links that look like the catalogue become entry pages of the crawler; many links to
+        # another domain suggest that the shop is there (the administrator decides, see the recipe).
         links = [c for c in discover_links(text, response.url, domain, set()) if c["score"] >= 2]
         state["candidates"] = _catalogue_links(text, response.url, domain)
-        state["step"] = 99
         self._set_stats(detect=state)
         self._attempt("domovská stránka", f"{len(links)} produktových odkazov, katalóg: "
                                           f"{', '.join(state['candidates']) or 'nenájdený'}")
+        shop = _shop_domain_hint(text, response.url, self._domains())
+        if shop:
+            self._set_stats(suggestions=[f"Domovská stránka má {shop[1]} odkazov na doménu {shop[0]}. Ak je tam obchod "
+                                         "konkurenta, pridajte ju v recepte medzi ďalšie domény a ako vstupnú stránku "
+                                         f"zadajte https://{shop[0]}/ (podmienky toho webu treba tiež skontrolovať)."])
 
     # ----- C: the guided crawler (source "crawl") -----
 
@@ -555,7 +723,7 @@ class Runner:
             if depth > 0 and crawl.dead(tpl, stats):
                 self._stat("dead_links")
                 continue
-            rank = priority if priority is not None else crawl.priority(url, stats)
+            rank = priority if priority is not None else crawl.priority(url, stats, self.settings.product_pattern)
             if row is None:
                 self.db.add(DiscoveryUrl(competitor_id=self.competitor.id, run_id=self.run.id, url=url[:2048],
                                          template=tpl[:600], depth=depth, priority=rank, status="queued",
@@ -569,9 +737,10 @@ class Runner:
         row = self._row(url)
         response = self._fetch(url)
         html = response.text or ""
-        links = crawl.page_links(html, response.url, self._domains(), self._drop())
+        links = crawl.page_links(html, response.url, self._domains(), self._drop(), self.settings.include_patterns,
+                                 self.settings.exclude_patterns)
         stats = self._template_stats()
-        product_links = [link for link in links if crawl.product_like(link, stats)]
+        product_links = [link for link in links if crawl.product_like(link, stats, self.settings.product_pattern)]
         data, _ = self._parse_product(html, response.url)
         if data is not None:
             kind = "product"
@@ -730,6 +899,11 @@ class Runner:
         """The next item whose page is to be read. Items of URL templates that gave no product after several
         pages (e.g. articles in a sitemap of the whole website) are skipped without a request."""
         stats = self._template_stats()
+        current = self.run.stats.get("current")
+        if current == "sitemap" and self.run.stats.get("reads_sitemap", 0) >= EARLY_SAMPLE \
+                and not self.run.stats.get("products_sitemap") and len(self.run.stats.get("plan") or []) > 1:
+            self._abandon_unread("sitemap", "sitemap nevedie na produkty (vzorka bez produktu)")
+            return None
         for _ in range(50):
             item = self.db.scalar(select(CatalogItem).where(
                 CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
@@ -742,11 +916,24 @@ class Runner:
             self._stat("skipped_urls")
         return None
 
+    def _abandon_unread(self, method: str, reason: str) -> None:
+        skipped = 0
+        for item in self.db.scalars(select(CatalogItem).where(
+                CatalogItem.competitor_id == self.competitor.id, CatalogItem.found_by == method,
+                CatalogItem.enriched_at.is_(None), CatalogItem.match_status == "new")):
+            self._enriched(item, error=f"Preskočené: {reason}.", status="skipped")
+            skipped += 1
+        self._stat("skipped_urls", skipped)
+
     def _enrich(self, url: str) -> None:
         item = self._next_to_enrich()
         response = self._fetch(url)
         data, error = self._parse_product(response.text or "", response.url)
         self._count_template(url, product=data is not None)
+        current = self.run.stats.get("current") or "?"
+        self._stat(f"reads_{current}")
+        if data is not None:
+            self._stat(f"products_{current}")
         if data is None:
             self._enriched(item, error=error)
             return
@@ -866,6 +1053,13 @@ class Runner:
         priced = self.db.scalar(select(func.count(CatalogItem.id)).where(
             CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
             CatalogItem.price.is_not(None)))
+        seen = set(self.run.seen_keys)
+        final = quality_of([i for i in self.db.scalars(select(CatalogItem).where(
+            CatalogItem.competitor_id == self.competitor.id)) if i.key in seen])
+        if not final["sufficient"]:
+            incomplete.append(f"nedostatočná kvalita: {final['reason']}")
+        self._set_stats(quality=final)
+        self._save_diagnosis(final)
         self._set_stats(priced=priced, incomplete=incomplete,
                         templates=_top_templates(stats.get("templates") or {}))
         self.run.status, self.run.finished_at = ("partial" if incomplete else "succeeded"), self.now
@@ -892,6 +1086,27 @@ class Runner:
         self.settings.next_prices_at = self.now + timedelta(days=1)
         self._save()
         log.info("Discovery run %s finished: %s", self.run.id, {k: v for k, v in stats.items() if k != "detect"})
+
+    def _save_diagnosis(self, final: dict[str, Any]) -> None:
+        """Remember the methods that brought products (up to the first sufficient one) for the next runs."""
+        methods = self.run.stats.get("methods") or {}
+        plan = self.run.stats.get("plan") or []
+        chosen: list[str] = []
+        for name in (m for m in plan if m in methods):
+            if methods[name]["found"]:
+                chosen.append(name)
+            if methods[name]["sufficient"]:
+                break
+        chosen = chosen or [m for m in plan if m in methods][-1:] or plan[:1]
+        previous = self.settings.diagnosis or {}
+        detected_now = bool(self.run.stats.get("detect")) or not previous.get("at")
+        self.settings.diagnosis = {
+            "at": self.now.isoformat() if detected_now else previous["at"], "chosen": chosen, "plan": plan,
+            "sources": self.run.stats.get("sources") or previous.get("sources") or {},
+            "methods": {**(previous.get("methods") or {}), **methods},
+            "suggestions": self.run.stats.get("suggestions") or previous.get("suggestions") or [],
+            "quality": final, "stale": not final["sufficient"],
+        }
 
     def _quality(self) -> tuple[bool, str]:
         stats = self.run.stats
@@ -984,3 +1199,67 @@ def _canonical_link(html: str, page_url: str) -> str | None:
 def _top_templates(templates: dict[str, dict[str, int]], limit: int = 15) -> dict[str, dict[str, int]]:
     ranked = sorted(templates.items(), key=lambda kv: (-kv[1].get("pages", 0), kv[0]))
     return dict(ranked[:limit])
+
+
+def quality_of(items: list[CatalogItem]) -> dict[str, Any]:
+    """Quality of a method's result: products found, shares with price, title and a plausible price.
+
+    Sufficient when something was found and at least 80 % of the products read have a price, 95 % a title
+    and 90 % a plausible price (1–20 000; the same price for every product means a wrong selector).
+    """
+    read = [i for i in items if i.price_from_listing or i.fetch_status in ("ok", "no_price")]
+    found = len([i for i in read if i.price is not None])
+    if not read:
+        return {"found": 0, "read": 0, "priced": 0.0, "titled": 0.0, "plausible": 0.0, "sufficient": False,
+                "reason": "nenašiel sa žiadny produkt"}
+    priced = found / len(read)
+    titled = sum(1 for i in read if i.title) / len(read)
+    prices = [i.price for i in read if i.price is not None]
+    plausible = sum(1 for p in prices if PLAUSIBLE_PRICE[0] <= p <= PLAUSIBLE_PRICE[1]) / len(prices) if prices else 0
+    if len(prices) >= FEW_PRODUCTS and len(set(prices)) == 1:
+        plausible = 0.0
+    reasons = []
+    if priced < MIN_PRICED:
+        reasons.append(f"cenu má iba {priced:.0%} produktov")
+    if titled < MIN_TITLED:
+        reasons.append(f"názov má iba {titled:.0%} produktov")
+    if plausible < MIN_PLAUSIBLE:
+        reasons.append("ceny nie sú vierohodné (mimo rozsahu alebo všetky rovnaké)")
+    if found < FEW_PRODUCTS and not reasons:
+        reasons_note = f"iba {found} produktov"
+    else:
+        reasons_note = None
+    return {"found": found, "read": len(read), "priced": round(priced, 3), "titled": round(titled, 3),
+            "plausible": round(plausible, 3), "sufficient": not reasons and found > 0,
+            "reason": "; ".join(reasons) or reasons_note}
+
+
+def diagnosis_valid(settings: DiscoverySettings, now: datetime) -> bool:
+    d = settings.diagnosis or {}
+    if not d.get("chosen") or d.get("stale") or not d.get("at"):
+        return False
+    return now - datetime.fromisoformat(d["at"]) < timedelta(days=DIAGNOSIS_DAYS)
+
+
+def _describe_quality(result: dict[str, Any]) -> str:
+    if not result["read"]:
+        return "nenašiel žiadny produkt"
+    text = (f"{result['found']} produktov s cenou z {result['read']} načítaných "
+            f"({'dostatočné' if result['sufficient'] else 'nedostatočné'})")
+    return f"{text}: {result['reason']}" if result.get("reason") else text
+
+
+def _shop_domain_hint(html: str, page_url: str, domains: set[str]) -> tuple[str, int] | None:
+    """Another domain the home page links to many times (e.g. spn.cz → naseucebnice.cz): maybe the shop."""
+    from bs4 import BeautifulSoup
+
+    counts: dict[str, int] = {}
+    for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
+        host = (urlsplit(urljoin(page_url, a["href"])).hostname or "").lower().removeprefix("www.")
+        if host and "." in host and not crawl.belongs(f"https://{host}/", domains):
+            counts[host] = counts.get(host, 0) + 1
+    if not counts:
+        return None
+    host, count = max(counts.items(), key=lambda kv: kv[1])
+    social = ("facebook.", "youtube.", "instagram.", "twitter.", "x.com", "linkedin.", "google.", "mapy.")
+    return (host, count) if count >= SHOP_HINT_LINKS and not host.startswith(social) else None

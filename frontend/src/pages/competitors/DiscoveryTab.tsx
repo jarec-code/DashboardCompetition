@@ -1,6 +1,6 @@
 import {
   Alert, Anchor, Badge, Button, Checkbox, Collapse, Group, List, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack,
-  Table, Text, TextInput, Title,
+  Table, Text, Textarea, TextInput, Title,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -11,7 +11,8 @@ import { Link } from "react-router-dom";
 
 import {
   useCatalog, useDiscovery, useDiscoveryUrls, useItemAction, useRunDiscovery, useSaveDiscovery,
-  type CatalogItem, type DiscoveryMode, type DiscoveryRun, type DiscoveryState, type ItemMatch, type SourceType,
+  type CatalogItem, type Diagnosis, type DiscoveryMode, type DiscoveryRun, type DiscoveryState, type ItemMatch,
+  type MethodQuality, type Recipe, type SourceType, type Strategy,
 } from "../../api/discovery";
 import { useProducts } from "../../api/products";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -31,6 +32,30 @@ const RUN_STATUS: Record<DiscoveryRun["status"], { label: string; color: string 
   failed: { label: "zlyhal", color: "red" }, stopped: { label: "zastavený", color: "orange" },
   partial: { label: "čiastočne", color: "yellow" },
 };
+const STRATEGIES: { value: Strategy; label: string }[] = [
+  { value: "auto", label: "Automaticky – adaptér alebo feed, sitemap, prechádzanie webu" },
+  { value: "adapter", label: "Iba adaptér webu" },
+  { value: "feed", label: "Iba produktový feed" },
+  { value: "sitemap", label: "Iba sitemap" },
+  { value: "crawl", label: "Iba prechádzanie webu" },
+];
+const lines = (values: string[]) => values.join("\n");
+const split = (text: string, sep: RegExp) => text.split(sep).map((v) => v.trim()).filter(Boolean);
+
+function recipeForm(s: DiscoveryState["settings"]) {
+  return { strategy: s.strategy ?? "auto", feed_url: s.feed_url ?? "", entry_urls: lines(s.entry_urls ?? []),
+           extra_domains: (s.extra_domains ?? []).join(", "), include_patterns: lines(s.include_patterns ?? []),
+           exclude_patterns: lines(s.exclude_patterns ?? []), product_pattern: s.product_pattern ?? "",
+           drop_params: (s.drop_params ?? []).join(", ") };
+}
+
+function recipeValue(f: ReturnType<typeof recipeForm>): Recipe {
+  return { strategy: f.strategy, feed_url: f.feed_url.trim() || null, entry_urls: split(f.entry_urls, /\n/),
+           extra_domains: split(f.extra_domains, /[,\s]+/), include_patterns: split(f.include_patterns, /\n/),
+           exclude_patterns: split(f.exclude_patterns, /\n/), product_pattern: f.product_pattern.trim() || null,
+           drop_params: split(f.drop_params, /[,\s]+/) };
+}
+
 const FETCH: Record<string, string> = {
   ok: "načítané", no_price: "bez ceny", not_product: "nie je produkt", failed: "chyba", skipped: "preskočené",
 };
@@ -89,18 +114,20 @@ function SettingsCard({ competitorId, state, readOnly }: { competitorId: number;
   const [numbers, setNumbers] = useState({ interval_days: s.interval_days, budget_per_night: s.budget_per_night,
                                            spacing_seconds: s.spacing_seconds, max_pages: s.max_pages,
                                            max_depth: s.max_depth, max_run_days: s.max_run_days });
-  const [manual, setManual] = useState(false);
-  const [source, setSource] = useState<{ type: SourceType; url: string; pattern: string }>(
-    { type: "listing", url: "", pattern: "" });
+  const [recipeOpen, setRecipeOpen] = useState(false);
+  const [recipe, setRecipe] = useState(() => recipeForm(s));
   useEffect(() => { setMode(s.mode); setTerms(Boolean(s.terms_confirmed_at)); }, [s.mode, s.terms_confirmed_at]);
 
   function submit(event: FormEvent, extra: { redetect?: boolean } = {}) {
     event.preventDefault();
-    save.mutate({ mode, terms_confirmed: terms, ...numbers, ...extra,
-                  source: manual && source.url ? { type: source.type, urls: [source.url], pattern: source.pattern || null }
-                    : undefined },
-                { onSuccess: () => { setManual(false); notifications.show({ color: "green", message: "Nastavenie objavovania bolo uložené." }); } });
+    save.mutate({ mode, terms_confirmed: terms, ...numbers, ...extra, recipe: recipeValue(recipe) },
+                { onSuccess: (st) => { setRecipe(recipeForm(st.settings));
+                                       notifications.show({ color: "green", message: "Nastavenie objavovania bolo uložené." }); } });
   }
+  const r = (key: keyof typeof recipe) => ({
+    value: recipe[key], disabled: readOnly,
+    onChange: (e: { currentTarget: { value: string } }) => setRecipe({ ...recipe, [key]: e.currentTarget.value }),
+  });
 
   const waiting = s.run_requested || state.runs[0]?.status === "running";
   return (
@@ -145,24 +172,36 @@ function SettingsCard({ competitorId, state, readOnly }: { competitorId: number;
               <Text size="sm">{SOURCES[s.source.type]}{s.source.detected ? " (nájdený automaticky)" : " (zadaný ručne)"}:{" "}
                 {s.source.urls.map((u) => <Anchor key={u} href={u} target="_blank" rel="noopener noreferrer" size="sm" mr="xs">{u}</Anchor>)}
               </Text>
-            ) : <Text size="sm" c="dimmed">Zatiaľ nerozpoznaný – nájde sa pri prvom behu (sitemap, feed alebo zoznam produktov).</Text>}
+            ) : <Text size="sm" c="dimmed">Zatiaľ nerozpoznaný – pri najbližšom behu sa vyskúšajú adaptér, feed, sitemap a prechádzanie webu.</Text>}
             {!readOnly && (
               <Group gap="xs" mt={4}>
-                <Button size="compact-xs" variant="subtle" onClick={() => setManual((m) => !m)}>Zadať zdroj ručne</Button>
+                <Button size="compact-xs" variant="subtle" onClick={() => setRecipeOpen((o) => !o)}>Recept webu</Button>
                 {s.source && <Button size="compact-xs" variant="subtle"
                                      onClick={(e) => submit(e as unknown as FormEvent, { redetect: true })}>Rozpoznať znova</Button>}
               </Group>
             )}
-            <Collapse expanded={manual}>
-              <Group align="flex-end" mt="xs">
-                <Select label="Typ" w={220} allowDeselect={false} value={source.type}
-                        data={(["sitemap", "feed", "listing"] as SourceType[]).map((t) => ({ value: t, label: SOURCES[t] }))}
-                        onChange={(v) => setSource({ ...source, type: (v as SourceType) ?? "listing" })} />
-                <TextInput label="Adresa" placeholder="https://…" w={360} value={source.url}
-                           onChange={(e) => setSource({ ...source, url: e.currentTarget.value })} />
-                <TextInput label="Vzor URL produktu (nepovinné)" placeholder="^/produkt/\d+$" w={220} value={source.pattern}
-                           onChange={(e) => setSource({ ...source, pattern: e.currentTarget.value })} />
-              </Group>
+            <Collapse expanded={recipeOpen || Boolean(readOnly && s.strategy !== "auto")}>
+              <Stack gap="xs" mt="xs" maw={760}>
+                <Text size="xs" c="dimmed">Recept upresní, kde a ako hľadať produkty, ak automatika nestačí. Zmena receptu spôsobí nové
+                  rozpoznanie pri najbližšom behu. Pri ďalšej doméne platí potvrdenie podmienok aj pre ňu.</Text>
+                <Select label="Spôsob načítania" w={420} allowDeselect={false} value={recipe.strategy} disabled={readOnly}
+                        data={STRATEGIES} onChange={(v) => setRecipe({ ...recipe, strategy: (v as Strategy) ?? "auto" })} />
+                <TextInput label="Adresa produktového feedu (Heureka, Google)" placeholder="https://…" {...r("feed_url")} />
+                <Textarea label="Vstupné stránky na prechádzanie (jedna na riadok)" autosize minRows={2} {...r("entry_urls")}
+                          placeholder="https://www.example.cz/katalog" />
+                <TextInput label="Ďalšie domény (čiarkou)" placeholder="naseucebnice.cz" {...r("extra_domains")}
+                           description="napr. obchod konkurenta na inej doméne" />
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <Textarea label="Prechádzať iba adresy (regulárne výrazy, jeden na riadok)" autosize minRows={2}
+                            placeholder="^/katalog" {...r("include_patterns")} />
+                  <Textarea label="Nikdy neprechádzať (regulárne výrazy)" autosize minRows={2} placeholder="^/blog"
+                            {...r("exclude_patterns")} />
+                </SimpleGrid>
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput label="Vzor adresy produktu (regulárny výraz)" placeholder="^/produkt/\d+$" {...r("product_pattern")} />
+                  <TextInput label="Ignorované parametre adresy (čiarkou)" placeholder="sort, page_size" {...r("drop_params")} />
+                </SimpleGrid>
+              </Stack>
             </Collapse>
           </div>
           <Text size="sm" c="dimmed">
@@ -242,11 +281,37 @@ function Diagnostics({ competitorId, state }: { competitorId: number; state: Dis
   const attempts = last.stats.attempts ?? [];
   const templates = Object.entries(last.stats.templates ?? {});
   const u = urls.data;
-  if (!attempts.length && !templates.length && !u?.problems.length) return null;
+  const d = state.settings.diagnosis as Diagnosis;
+  const methods = Object.entries(d?.methods ?? {}) as [SourceType, MethodQuality][];
+  if (!attempts.length && !templates.length && !u?.problems.length && !methods.length) return null;
   return (
     <Paper withBorder p="md" radius="md">
       <Title order={3} size="h4" mb="xs">Diagnostika zdroja</Title>
       <Stack gap="sm">
+        {(d?.suggestions ?? []).map((text, i) => <Alert key={i} color="blue" p="xs">{text}</Alert>)}
+        {methods.length > 0 && (
+          <div>
+            <Text size="sm" fw={500}>Spôsoby načítania {d.at && <Text span size="xs" c="dimmed">(rozpoznané {formatDateTime(d.at)}
+              {d.stale ? ", pri ďalšom behu sa rozpoznajú znova" : ""})</Text>}</Text>
+            <Table.ScrollContainer minWidth={600}>
+              <Table verticalSpacing={2} fz="xs">
+                <Table.Thead><Table.Tr><Table.Th>Spôsob</Table.Th><Table.Th ta="right">Produkty s cenou</Table.Th>
+                  <Table.Th ta="right">Načítané</Table.Th><Table.Th ta="right">S cenou</Table.Th><Table.Th ta="right">S názvom</Table.Th>
+                  <Table.Th ta="right">Vierohodné ceny</Table.Th><Table.Th>Výsledok</Table.Th></Table.Tr></Table.Thead>
+                <Table.Tbody>{methods.map(([name, q]) => (
+                  <Table.Tr key={name}>
+                    <Table.Td>{SOURCES[name]}{d.chosen?.includes(name) && <Badge ml={6} size="xs" variant="light">používa sa</Badge>}</Table.Td>
+                    <Table.Td ta="right">{q.found}</Table.Td><Table.Td ta="right">{q.read}</Table.Td>
+                    <Table.Td ta="right">{Math.round(q.priced * 100)} %</Table.Td><Table.Td ta="right">{Math.round(q.titled * 100)} %</Table.Td>
+                    <Table.Td ta="right">{Math.round(q.plausible * 100)} %</Table.Td>
+                    <Table.Td><Text size="xs" c={q.sufficient ? "green" : "orange"}>{q.sufficient ? "dostatočné" : "nedostatočné"}
+                      {q.reason ? ` – ${q.reason}` : ""}</Text></Table.Td>
+                  </Table.Tr>
+                ))}</Table.Tbody>
+              </Table>
+            </Table.ScrollContainer>
+          </div>
+        )}
         {attempts.length > 0 && (
           <div>
             <Text size="sm" fw={500}>Ako sa hľadali produkty (posledný beh)</Text>

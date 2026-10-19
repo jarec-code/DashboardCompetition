@@ -541,7 +541,9 @@ Podľa [SCRAPING_ROBUSTNESS_PLAN.md](SCRAPING_ROBUSTNESS_PLAN.md):
 - riadený crawler s frontom v DB a limitmi, záloha na crawler namiesto chyby „Zdroj sa nepodarilo nájsť“,
 - testy: backend 372, Vitest 4, e2e 31.
 
-Etapy 3–5 (výber stratégií, recept webu, prehliadač) čakajú.
+**Etapy 3 a 4 ✅ 19. 10. 2026:** plán spôsobov podľa ceny, hodnotenie kvality, kombinovanie a uloženie diagnózy
+(nová detekcia po 30 dňoch alebo pri zlej kvalite), návrh domény obchodu, recept webu v UI. Testy: backend 376,
+e2e 31. Etapa 5 (prehliadač) čaká na web, ktorý ju bude potrebovať.
 
 ---
 

@@ -123,8 +123,11 @@ zoznam so stránkovaním alebo adaptér webu, napr. alter.cz). Nové produkty sp
 podľa ročníka, predmetu, typu a dielu, prípadne podľa ISBN/EAN. Po dvoch úspešných tieňových behoch prejde
 do automatiky a spárované produkty začne sledovať. Nejednoznačné položky čakajú v záložke na kontrolu.
 Ak web nemá sitemapu ani feed, prejde ho riadený crawler (od katalógu, cez kategórie a série až
-po detaily produktov) s limitmi stránok, hĺbky a času. Panel „Diagnostika zdroja“ ukáže, ako sa produkty
-hľadali a ktoré časti webu sa nespracovali. Bezpečnostné pravidlá sú v
+po detaily produktov) s limitmi stránok, hĺbky a času. Aplikácia vyskúša spôsoby od najlacnejšieho (adaptér
+alebo feed, sitemap, prechádzanie webu), ohodnotí kvalitu výsledku a slabý spôsob doplní ďalším. Diagnózu si
+pamätá 30 dní. Panel „Diagnostika zdroja“ ukáže, ako sa produkty hľadali, s akou kvalitou a ktoré časti webu sa
+nespracovali. „Recept webu“ dovolí zadať vstupné stránky, ďalšie domény (napr. obchod na inej doméne), vzory
+adries a vynútený spôsob. Bezpečnostné pravidlá sú v
 [docs/AUTO_DISCOVERY_PLAN.md](docs/AUTO_DISCOVERY_PLAN.md) a robustné načítavanie v
 [docs/SCRAPING_ROBUSTNESS_PLAN.md](docs/SCRAPING_ROBUSTNESS_PLAN.md).
 

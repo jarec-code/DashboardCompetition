@@ -26,8 +26,12 @@ def belongs(url: str, domains: set[str]) -> bool:
     return any(host == d or host.endswith("." + d) for d in domains)
 
 
-def page_links(html: str, page_url: str, domains: set[str], drop_params: set[str]) -> list[str]:
-    """Canonical internal links of a page worth reading: allowed domains, no files, cart, login or search."""
+def page_links(html: str, page_url: str, domains: set[str], drop_params: set[str],
+               include: list[str] | None = None, exclude: list[str] | None = None) -> list[str]:
+    """Canonical internal links of a page worth reading: allowed domains, no files, cart, login or search;
+    `include`/`exclude` are regular expressions of a website's recipe on the path with query."""
+    keep = [re.compile(p) for p in include or []]
+    drop = [re.compile(p) for p in exclude or []]
     found: list[str] = []
     seen: set[str] = set()
     for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
@@ -39,6 +43,9 @@ def page_links(html: str, page_url: str, domains: set[str], drop_params: set[str
             continue
         parts = urlsplit(url)
         if SKIP_PATH.search(parts.path) or FILE_EXTENSION.search(parts.path) or skipped_query(parts.query):
+            continue
+        target = parts.path + ("?" + parts.query if parts.query else "")
+        if (keep and not any(p.search(target) for p in keep)) or any(p.search(target) for p in drop):
             continue
         seen.add(url)
         found.append(url)
@@ -55,8 +62,11 @@ def merged(*stats: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
     return total
 
 
-def product_like(url: str, stats: dict[str, dict[str, int]]) -> bool:
-    """Known product template, or a URL that looks like a product page (path or query)."""
+def product_like(url: str, stats: dict[str, dict[str, int]], pattern: str | None = None) -> bool:
+    """The recipe's product pattern; else a known product template, or a URL that looks like a product page."""
+    if pattern:
+        parts = urlsplit(url)
+        return bool(re.search(pattern, parts.path + ("?" + parts.query if parts.query else "")))
     known = stats.get(template(url))
     if known and known["pages"] >= 2:
         return known["products"] * 2 >= known["pages"]
@@ -69,8 +79,8 @@ def dead(tpl: str, stats: dict[str, dict[str, int]]) -> bool:
     return bool(known and known["pages"] >= DEAD_AFTER_PAGES and not known["products"] and not known["listings"])
 
 
-def priority(url: str, stats: dict[str, dict[str, int]]) -> int:
-    if product_like(url, stats):
+def priority(url: str, stats: dict[str, dict[str, int]], pattern: str | None = None) -> int:
+    if product_like(url, stats, pattern):
         return PRIORITY_PRODUCT
     known = stats.get(template(url))
     if not known or not known["pages"]:

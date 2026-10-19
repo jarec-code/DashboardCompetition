@@ -21,6 +21,15 @@ export interface DiscoverySettings {
   max_depth: number;
   max_run_days: number;
   source: DiscoverySource | null;
+  strategy: Strategy;
+  feed_url: string | null;
+  entry_urls: string[];
+  extra_domains: string[];
+  include_patterns: string[];
+  exclude_patterns: string[];
+  product_pattern: string | null;
+  drop_params: string[];
+  diagnosis: Diagnosis | Record<string, never>;
   run_requested: boolean;
   next_run_at: string | null;
   last_success_at: string | null;
@@ -29,6 +38,34 @@ export interface DiscoverySettings {
   shadow_ok_runs: number;
   budget_used: number;
   budget_date: string | null;
+}
+
+export type Strategy = "auto" | "adapter" | "feed" | "sitemap" | "crawl";
+
+export interface MethodQuality {
+  found: number; read: number; priced: number; titled: number; plausible: number; sufficient: boolean;
+  reason: string | null;
+}
+
+export interface Diagnosis {
+  at: string;
+  chosen: SourceType[];
+  plan: SourceType[];
+  methods: Partial<Record<SourceType, MethodQuality>>;
+  suggestions: string[];
+  quality: MethodQuality;
+  stale: boolean;
+}
+
+export interface Recipe {
+  strategy: Strategy;
+  feed_url: string | null;
+  entry_urls: string[];
+  extra_domains: string[];
+  include_patterns: string[];
+  exclude_patterns: string[];
+  product_pattern: string | null;
+  drop_params: string[];
 }
 
 export interface DiscoveryRun {
@@ -65,6 +102,7 @@ export interface DiscoverySettingsInput {
   max_depth: number;
   max_run_days: number;
   source?: { type: SourceType; urls: string[]; pattern?: string | null } | null;
+  recipe?: Recipe;
   redetect?: boolean;
 }
 

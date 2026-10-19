@@ -26,7 +26,8 @@ class DiscoverySettingsIn(BaseModel):
     max_depth: int = Field(default=4, ge=1, le=10)
     max_run_days: int = Field(default=14, ge=1, le=60)
     source: discovery.DiscoverySource | None = None  # None = keep (or detect automatically)
-    redetect: bool = False  # forget the source and find it again
+    recipe: discovery.Recipe | None = None  # None = keep the recipe as it is
+    redetect: bool = False  # forget the source and the diagnosis, find the methods again
 
 
 class RunOut(BaseModel):
@@ -92,10 +93,16 @@ def put_discovery(competitor_id: int, data: DiscoverySettingsIn, db: DbSession, 
     settings.interval_days, settings.budget_per_night = data.interval_days, data.budget_per_night
     settings.spacing_seconds = data.spacing_seconds
     settings.max_pages, settings.max_depth, settings.max_run_days = data.max_pages, data.max_depth, data.max_run_days
+    if data.recipe is not None:
+        new = data.recipe.model_dump()
+        if new != {k: getattr(settings, k) for k in discovery.RECIPE_FIELDS}:
+            for key, value in new.items():
+                setattr(settings, key, value)
+            data.redetect = True  # a changed recipe: the methods are found and judged anew
     if data.source is not None:
         settings.source = data.source.model_copy(update={"detected": False})
     elif data.redetect:
-        settings.source = None
+        settings.source, settings.diagnosis = None, {}
     discovery.save(config, settings)
     if data.mode == "off":  # stop what is running
         for run in db.scalars(select(DiscoveryRun).where(DiscoveryRun.competitor_id == competitor.id,
