@@ -1242,6 +1242,9 @@ class Runner:
         if pending:
             return False, f"{pending} produktov ešte nebolo načítaných (rozpočet), pokračuje sa ďalší beh."
         priced = [i for i in with_data if i.price is not None]
+        if len(priced) < FEW_PRODUCTS:  # e.g. one priced page of a presentation website (spn.cz: a webinar)
+            return False, (f"Našlo sa iba {len(priced)} produktov s cenou; na automatické sledovanie treba aspoň "
+                           f"{FEW_PRODUCTS}. Skontrolujte, či je zdroj naozaj obchod konkurenta.")
         share = len(priced) / len(read) if read else 0
         if share < MIN_PRICED_SHARE and self.settings.source and self.settings.source.type != "sitemap":
             return False, f"Cenu má iba {share:.0%} produktov (potrebných {MIN_PRICED_SHARE:.0%})."

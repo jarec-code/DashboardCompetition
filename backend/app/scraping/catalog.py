@@ -207,8 +207,22 @@ def _nns_start() -> tuple[str, ...]:
     return nns_cz.start_urls()
 
 
+def _naseucebnice_listing(text: str, page_url: str, domain: str) -> PageResult:
+    from app.scraping.sites import naseucebnice_cz
+
+    return naseucebnice_cz.read(text, page_url)
+
+
+def _naseucebnice_start() -> tuple[str, ...]:
+    from app.scraping.sites import naseucebnice_cz
+
+    return naseucebnice_cz.start_urls()
+
+
 ADAPTERS = [
     Adapter("alter_cz", ("alter.cz",), ("/shop",), _alter_listing),
+    # SPN sells in the shared shop www.naseucebnice.cz (absolute start URLs: another domain than spn.cz)
+    Adapter("naseucebnice_cz", ("spn.cz",), _naseucebnice_start(), _naseucebnice_listing),
     Adapter("nns_cz", ("nns.cz",), _nns_start(), _nns_listing, _nns_request),
 ]
 

@@ -842,3 +842,55 @@ def test_nns_json_listing_per_grade_with_paging(db):
     assert discounted.price == Decimal("141.55")  # the price the shop shows (the regular one is struck through)
     assert db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:3002")) is None  # free / withdrawn
     assert db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:9000")) is None
+
+
+def naseucebnice_page(objects: list[dict], offset: int, total: int) -> str:
+    """A publisher page of www.naseucebnice.cz: the listing inside a JavaScript string of the Next.js payload."""
+    payload = json.dumps({"dependency": {"meta": {"total_count": total, "limit": 100, "offset": offset},
+                                         "objects": objects}}, ensure_ascii=False, separators=(",", ":"))
+    pushed = json.dumps(f'52:["$","$L55",null,{payload}]\n', ensure_ascii=False)
+    return f"<html><body><h1>SPN</h1><script>self.__next_f.push([1,{pushed}])</script></body></html>"
+
+
+def spn_book(n: int, price: int, regular: int | None = None, printed: bool = True) -> dict:
+    variants = [{"type": "demo", "ean": None, "is_in_stock": True, "price_with_vat": 0}]
+    if printed:
+        variants.insert(0, {"type": "physical", "ean": f"97880723{n:05d}", "is_in_stock": n % 2 == 0,
+                            "price_with_vat": price, "original_price_with_vat": regular or price})
+    return {"code": str(6000 + n), "name": f"Matematika {n % 9 + 1} pro ZŠ, pracovní sešit \"nová\"",
+            "page_path": f"matematika-{n}", "manufacturer": {"name": "SPN - pedagogické nakladatelství"},
+            "variants": variants}
+
+
+def test_spn_is_read_from_its_shop_naseucebnice_cz(db):
+    from app.scraping.sites import naseucebnice_cz
+
+    competitor(db, "SPN", "https://www.spn.cz/", "spn.cz")
+    first = [spn_book(n, 9900 + n, regular=12900 if n == 1 else None) for n in range(100)]
+    second = [spn_book(100 + n, 5000) for n in range(6)] + [spn_book(200, 0, printed=False)]
+    start = naseucebnice_cz.start_urls()[0].removeprefix(naseucebnice_cz.SHOP)
+    site = FakeSite({"/robots.txt": (200, "User-agent: *\nDisallow: /kosik\n"),
+                     start: (200, naseucebnice_page(first, 0, 107)),
+                     start.replace("offset=0", "offset=100"): (200, naseucebnice_page(second, 100, 107))})
+    run = run_all(db, site)
+    assert run.status == "succeeded" and run.source_type == "adapter", run.error
+    assert site.requests == ["/robots.txt", start, start.replace("offset=0", "offset=100")]
+    assert run.stats["found"] == 106  # the licence-only item has no printed variant: left out
+    item = db.scalar(select(CatalogItem).where(CatalogItem.key == "naseucebnice:matematika-1"))
+    assert (item.url, item.price, item.price_from_listing, item.identifiers) == (
+        "https://www.naseucebnice.cz/matematika-1", Decimal("99.01"), True, {"ean": "9788072300001"})
+    assert item.title == 'Matematika 2 pro ZŠ, pracovní sešit "nová"'
+    assert item.hints == {"availability": "out_of_stock", "code": "6001", "regular_price": "129.00"}
+
+
+def test_one_priced_page_is_not_enough_to_track_automatically(db):
+    c = competitor(db, "Vydavatel", "https://vydavatel.example.cz/", "vydavatel.example.cz")
+    site = FakeSite({"/robots.txt": (200, "User-agent: *\n"),
+                     "/": (200, '<a href="/workshopy/webinare">Webináře</a><a href="/o-nas">O nás</a>'),
+                     "/workshopy/webinare": (200, jsonld_page("Připravované WORKSHOPY a webináře", "790")),
+                     "/o-nas": (200, "<h1>O nás</h1>")})
+    for _ in range(2):
+        run = run_all(db, site)
+        assert run.stats["quality_ok"] is False and "iba 1 produktov" in run.stats["quality_note"]
+        request_again(db, c)
+    assert settings_of(db, c).mode == "shadow"
