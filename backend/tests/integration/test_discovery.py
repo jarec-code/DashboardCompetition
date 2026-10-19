@@ -522,3 +522,55 @@ def test_recipe_api_validates_and_renews_the_diagnosis(client, db):
                                                       "drop_params": ["Sort"]}}).json()["settings"]
     assert (state["strategy"], state["extra_domains"], state["drop_params"]) == ("crawl", ["shop.cz"], ["sort"])
     assert state["diagnosis"] == {} and state["source"] is None  # found and judged anew
+
+
+PRODOS_PAGE = (Path(__file__).parent.parent / "fixtures" / "html" / "prodos" / "cesky-slabikar-1.html").read_bytes()
+
+
+def prodos_site(products: int = 6, forbidden: list[str] | None = None) -> FakeSite:
+    """Like ucebnice.org: a sitemap starting with information pages (one of them, the forum, is closed: 403),
+    product pages without structured data ("cena vč. DPH: 102.00 Kč")."""
+    info = ["nakupovani", "obchodni-podminky", "reklamacni-rad", "forum", "odkazy", "uvod", "mapa-webu"]
+    books = [f"cesky-jazyk-1st/slabikar-{n}" for n in range(1, products + 1)]
+    locs = [f"https://ucebnice.example.cz/{p}" for p in info + books]
+    sitemap = '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + \
+              "".join(f"<url><loc>{u}</loc></url>" for u in locs) + "</urlset>"
+    pages = {"/robots.txt": (200, "User-agent: *\nSitemap: https://ucebnice.example.cz/sitemap.xml\n"),
+             "/sitemap.xml": (200, sitemap), "/": (200, "<h1>Učebnice</h1>"),
+             **{f"/{p}": (200, f"<h1>{p}</h1><p>Informace.</p>") for p in info},
+             "/forum": (403, "<h1>403 Forbidden</h1>")}
+    for n in range(1, products + 1):
+        page = PRODOS_PAGE.replace("Český slabikář 1".encode(), f"Český slabikář {n}".encode()) \
+                          .replace(b"102.00", f"{100 + n}.00".encode())
+        if n > 1:  # one ISBN per title: only the first keeps the real one
+            page = page.replace(b"978-80-7230-170-6", b"")
+        pages[f"/cesky-jazyk-1st/slabikar-{n}"] = (200, page, "text/html; charset=UTF-8")
+    for path in forbidden or []:
+        pages[path] = (403, "<h1>403 Forbidden</h1>")
+    return FakeSite(pages)
+
+
+def test_one_closed_page_does_not_stop_discovery_and_products_are_read_first(db):
+    c = competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz")
+    site = prodos_site()
+    run = run_all(db, site)
+    assert run.status in ("succeeded", "partial") and settings_of(db, c).paused_until is None
+    reads = [r for r in site.requests if r not in ("/robots.txt", "/sitemap.xml", "/")]
+    assert all(r.startswith("/cesky-jazyk-1st/") for r in reads[:6])  # product page type first, not sitemap order
+    items = {i.key.rsplit("/", 1)[1]: i for i in db.scalars(select(CatalogItem))}
+    assert (items["slabikar-1"].price, items["slabikar-1"].identifiers, items["slabikar-1"].title) == (
+        Decimal("101.00"), {"isbn": "9788072301706"}, "Český slabikář 1")
+    if "/forum" in site.requests:  # read at the end (if at all): recorded as a failure of that page
+        assert items["forum"].fetch_status == "failed" and "403" in items["forum"].enrich_error
+
+
+def test_forbidden_on_several_pages_in_a_row_means_blocking(db):
+    c = competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz")
+    every_page = [f"/cesky-jazyk-1st/slabikar-{n}" for n in range(1, 7)] + \
+        ["/nakupovani", "/obchodni-podminky", "/reklamacni-rad", "/odkazy", "/uvod", "/mapa-webu"]
+    site = prodos_site(forbidden=every_page)
+    run = run_all(db, site)
+    assert run.status == "stopped" and "obmedzil prístup" in run.error
+    assert settings_of(db, c).paused_until is not None
+    pages = [r for r in site.requests if r not in ("/robots.txt", "/sitemap.xml", "/")]
+    assert len(pages) == 3  # three different pages closed in a row: the website blocks us

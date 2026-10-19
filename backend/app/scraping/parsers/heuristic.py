@@ -19,8 +19,12 @@ from app.scraping.parsers.base import Extracted, PageContext, ParseError
 
 VERSION = 1
 _MONEY = r"(\d{1,3}(?:[  .]\d{3})*(?:[,.]\d{1,2})?|\d+(?:[,.]\d{1,2})?)\s*(?:,-|,—)?\s*(Kč|CZK|€|EUR|Eur|eur|Sk)"
-_LABELLED = re.compile(r"(?:naše\s+cena|naša\s+cena|cena\s+s\s+dph|prodejní\s+cena|predajná\s+cena|cena\s+za\s+kus|"
-                       r"\bcena|\bprice)\s*(?:s\s*dph)?\s*:?\s*" + _MONEY, re.I)
+# A price label: "Cena:", "Naše cena", "Cena s DPH:", "cena vč. DPH:", "cena bez DPH:", "Price" … (the label
+# may have a few words between "cena" and the colon), then the amount with a currency.
+_LABELLED = re.compile(r"((?:\w+\s+)?(?:cena|price)(?:[ \t]+[\w.%]+){0,4}?)\s*:?\s*" + _MONEY, re.I)
+_WITHOUT_VAT = re.compile(r"bez\s+dph|without\s+vat|excl", re.I)
+_WITH_VAT = re.compile(r"(vč\.?|včetně|vrátane|s|with)\s+(dph|vat)", re.I)
+_MEMBER = re.compile(r"vaše|vaša|your|členská|clenska|pro\s+školy|škol|velkoobchod|veľkoobchod", re.I)
 _ANY_MONEY = re.compile(_MONEY)
 _TITLE_CLASS = re.compile(r"(nazev|název|nazov|title|product[-_]?name|productname|heading|jmeno|titul)", re.I)
 _SKIP_TEXT = re.compile(r"(košík|kosik|cookies|přihlášení|prihlásenie|menu)", re.I)
@@ -55,8 +59,15 @@ def parse_heuristic(ctx: PageContext) -> Extracted:
     title = _title(soup)
     text = _text(soup)
     labelled = _LABELLED.findall(text)
+    vat_mode = "unknown"
     if labelled:
-        amount, currency = labelled[0]  # the first price label belongs to the product the page is about
+        # The price with VAT for everyone: a label "with VAT" first, then plain labels; prices without VAT or
+        # for members/schools only when there is nothing else. The first of a kind belongs to the product.
+        def rank(entry):
+            label = entry[0]
+            return (bool(_WITHOUT_VAT.search(label)), bool(_MEMBER.search(label)), not _WITH_VAT.search(label))
+        label, amount, currency = min(labelled, key=rank)
+        vat_mode = "without_vat" if _WITHOUT_VAT.search(label) else "with_vat" if _WITH_VAT.search(label) else "unknown"
     else:
         prices = {(a, c) for a, c in _ANY_MONEY.findall(text)}
         if len(prices) != 1:
@@ -68,4 +79,4 @@ def parse_heuristic(ctx: PageContext) -> Extracted:
         raise ParseError("Na stránke sa nenašiel názov alebo cena produktu.")
     return Extracted(price=price, currency=detect_currency(currency) or currency.upper(), title=title[:500],
                      availability=normalize_availability(text[:20000]), identifiers=find_identifiers(text),
-                     source="heuristic")
+                     vat_mode=vat_mode, source="heuristic")

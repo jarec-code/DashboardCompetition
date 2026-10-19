@@ -62,3 +62,13 @@ def test_request_rate_from_robots():
     other_group = "User-agent: Googlebot\nRequest-rate: 1/1s\n\nUser-agent: *\nDisallow: /kosik/\n"
     assert request_rate_interval(other_group, "CompetitionChecker", day) is None
     assert request_rate_interval("User-agent: *\nRequest-rate: 1/5\n", "CompetitionChecker", day) == 5
+
+
+def test_heuristic_prefers_the_price_with_vat_for_everyone():
+    html = ("<html><body><h1>Český slabikář 1</h1><p>ISBN: 978-80-7230-170-6 cena bez DPH: 97.14 Kč "
+            "cena vč. DPH: 102.00 Kč Vaše cena vč. DPH: 91.80 Kč (sleva 10 % pro školy)</p></body></html>")
+    data = parse_heuristic(PageContext(html=html, url="https://x.cz/", config={}))
+    assert (data.price, data.vat_mode, data.identifiers) == (Decimal("102.00"), "with_vat", {"isbn": "9788072301706"})
+    only_net = "<h1>Kniha</h1><p>Cena bez DPH: 90 Kč</p>"
+    net = parse_heuristic(PageContext(html=only_net, url="https://x.cz/", config={}))
+    assert (net.price, net.vat_mode) == (Decimal("90"), "without_vat")

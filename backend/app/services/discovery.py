@@ -64,6 +64,8 @@ MIN_PRICED_SHARE = 0.9           # quality needed to leave the shadow mode
 MAX_COUNT_CHANGE = 0.2           # … and a stable number of products between runs
 SUSPICIOUS_DROP = 0.5            # fewer than half of last run's products: stop instead of marking them gone
 DIAGNOSIS_DAYS = 30              # the chosen methods are tried anew after this
+FORBIDDEN_TO_STOP = 3            # HTTP 403 on this many different pages in a row: the website blocks us
+ENRICH_WINDOW = 500              # items considered when choosing the next product page to read
 EARLY_SAMPLE = 15                # pages of a sitemap read before it is judged (no product: next method)
 # When the result of a method is sufficient (docs/SCRAPING_ROBUSTNESS_PLAN.md, part 6)
 MIN_PRICED = 0.8
@@ -439,6 +441,8 @@ class Runner:
             else:
                 self._enrich(url)
             self.run.errors_in_row = 0
+            if self.run.stats.get("forbidden_in_row"):
+                self.run.stats = {**self.run.stats, "forbidden_in_row": 0}
         except FetchError as exc:
             self._request_failed(url, exc)
 
@@ -461,15 +465,25 @@ class Runner:
             self._make_plan()
 
     def _request_failed(self, url: str, exc: FetchError) -> None:
-        blocked = exc.status in (403, 429) or "botom" in str(exc)
-        if blocked:
+        """A failed request. The whole website is treated as blocking us only on HTTP 429, a bot challenge,
+        403 on the home page or entry pages, or 403 on several different pages in a row; a single page that
+        is closed (403, e.g. a members' forum) or missing (404) is recorded as a failure of that page."""
+        forbidden = exc.status == 403 and "botom" not in str(exc)
+        if forbidden:
+            self.run.stats = {**self.run.stats, "forbidden_in_row": self.run.stats.get("forbidden_in_row", 0) + 1}
+            self._stat("forbidden_urls")
+        page_level = forbidden and self.run.phase in ("list", "enrich") \
+            and self.run.stats["forbidden_in_row"] < FORBIDDEN_TO_STOP and not self._is_entry(url)
+        if (exc.status in (403, 429) or "botom" in str(exc)) and not page_level:
             if exc.status == 429 and exc.retry_after:
                 self.politeness.blocked_until[urlsplit(url).hostname or ""] = time.monotonic() + exc.retry_after
-            raise Stop(f"Web obmedzil prístup ({exc}). Objavovanie sa pozastavuje na {PAUSE_DAYS} dní.", pause=True)
-        if self.run.phase == "enrich" and exc.status in (404, 410):
+            raise Stop(f"Web obmedzil prístup ({exc}, {url}). Objavovanie sa pozastavuje na {PAUSE_DAYS} dní.",
+                       pause=True)
+        if self.run.phase == "enrich" and exc.status in (403, 404, 410):
             item = self._next_to_enrich()
             if item is not None:
-                self._enriched(item, error=str(exc), status="failed")
+                self._enriched(item, error=f"{exc} ({url})", status="failed")
+                self._count_template(url)
             return
         crawling = self.run.phase == "list" and self.run.stats.get("current") == "crawl"
         if crawling:
@@ -479,6 +493,9 @@ class Runner:
             if exc.status in (404, 410):
                 self._stat("broken_links")  # a dead link on the website, not a gap in what was read
                 return
+            if page_level:
+                self._count_template(url)
+                return  # one closed page: recorded, the crawl goes on
             self._stat("failed_urls")
         self.run.errors_in_row += 1
         self._set_stats(last_error=str(exc)[:300])
@@ -905,16 +922,29 @@ class Runner:
             self._abandon_unread("sitemap", "sitemap nevedie na produkty (vzorka bez produktu)")
             return None
         for _ in range(50):
-            item = self.db.scalar(select(CatalogItem).where(
+            batch = list(self.db.scalars(select(CatalogItem).where(
                 CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
                 CatalogItem.price_from_listing.is_(False), CatalogItem.enriched_at.is_(None),
-                CatalogItem.match_status == "new").order_by(CatalogItem.id))
-            if item is None or not crawl.dead(template(item.url), stats):
-                return item
-            self._enriched(item, error="Preskočené: stránky tohto typu (šablóna URL) nie sú produkty.",
-                           status="skipped")
-            self._stat("skipped_urls")
+                CatalogItem.match_status == "new").order_by(CatalogItem.id).limit(ENRICH_WINDOW)))
+            if not batch:
+                return None
+            dead = [i for i in batch if crawl.dead(template(i.url), stats)]
+            if dead:
+                for item in dead:
+                    self._enriched(item, error="Preskočené: stránky tohto typu (šablóna URL) nie sú produkty.",
+                                   status="skipped")
+                    self._stat("skipped_urls")
+                continue
+            # Page types that gave products first, unknown types next, the rest last: the budget goes to
+            # products, not to the order of the source (a sitemap often starts with information pages).
+            return min(batch, key=lambda i: (_enrich_rank(template(i.url), stats, self.settings.product_pattern, i.url),
+                                             i.id))
         return None
+
+    def _is_entry(self, url: str) -> bool:
+        base = self.competitor.base_url.rstrip("/")
+        entries = {u.rstrip("/") for u in (self.settings.source.urls if self.settings.source else [])}
+        return url.rstrip("/") in entries | {base}
 
     def _abandon_unread(self, method: str, reason: str) -> None:
         skipped = 0
@@ -1263,3 +1293,14 @@ def _shop_domain_hint(html: str, page_url: str, domains: set[str]) -> tuple[str,
     host, count = max(counts.items(), key=lambda kv: kv[1])
     social = ("facebook.", "youtube.", "instagram.", "twitter.", "x.com", "linkedin.", "google.", "mapy.")
     return (host, count) if count >= SHOP_HINT_LINKS and not host.startswith(social) else None
+
+
+def _enrich_rank(tpl: str, stats: dict[str, dict[str, int]], pattern: str | None, url: str) -> int:
+    if pattern:
+        return 0 if crawl.product_like(url, stats, pattern) else 2
+    known = stats.get(tpl)
+    if known and known["products"]:
+        return 0
+    if not known or not known["pages"]:
+        return 1 + (0 if urlsplit(url).path.count("/") >= 2 else 1)  # deeper paths are more often products
+    return 3

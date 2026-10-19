@@ -515,3 +515,29 @@ Ak je obchod vykresľovaný JavaScriptom, diagnóza to ukáže (žiadne produkty
 
 **Prodos:** po uplynutí pauzy (26. 10.) sitemap preskočí neproduktové typy stránok. Ak sa 403 zopakuje, ide
 o blokovanie zo strany webu a objavovanie sa opäť pozastaví (ochrana sa neobchádza).
+
+---
+
+## 16. Prodos: pozastavenie po HTTP 403 (19. 10. 2026)
+
+**Zistenia ✔:**
+- Sitemap ucebnice.org (3 085 URL) začína informačnými stránkami. Štvrtá je `/forum`, ktorá presmeruje cez chybnú
+  adresu `http://ucebnice.org:443/forum/` na `https://ucebnice.org/forum/` a tá vracia **403**: fórum je zamknuté.
+- Produktové stránky vracia web bežne (200), náš prístup neblokuje.
+- Pravidlo „každé 403 = web obmedzil prístup, pauza 7 dní“ preto pozastavilo celé objavovanie kvôli jednej
+  zamknutej podstránke (behy 2, 6 a 9 vždy na 4. alebo 5. požiadavke).
+- Produktové stránky nemajú štruktúrované dáta. Cena je v texte s návestiami „cena bez DPH: 102.00 Kč“,
+  „cena vč. DPH: 102.00 Kč“ a „Vaše cena vč. DPH: 91.80 Kč (sleva 10 % pro školy…)“, ktoré parser z textu
+  nepoznal.
+- Údaj `charset=windows-1250` v stránke je nesprávny; stránka je v UTF-8, ako hlási server, a dekóduje sa správne.
+
+**Úpravy:**
+- 403 na jednej stránke pri čítaní zdroja alebo detailov je chyba tej stránky (zaeviduje sa a pokračuje sa).
+  Pauza nastane pri 403 na domovskej alebo vstupnej stránke, pri 3 rôznych stránkach so 403 za sebou, pri 429
+  alebo pri ochrane proti botom.
+- Parser z textu pozná dlhšie návestia ceny a uprednostní cenu s DPH pre všetkých. Cenu bez DPH alebo cenu pre
+  školy a členov použije iba vtedy, ak inú nemá, a vyznačí režim DPH.
+- Stránky zo sitemapy sa načítavajú podľa typu stránky: typy s produktmi prvé, neznáme (hlbšie cesty skôr)
+  potom, ostatné nakoniec. Neriadia sa poradím v sitemape.
+- Testy: zamknuté fórum v sitemape nezastaví beh a produkty sa načítajú prvé; 3 zamknuté stránky za sebou
+  znamenajú blokovanie; ceny z textu Prodosu.
