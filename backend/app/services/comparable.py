@@ -29,7 +29,7 @@ SUBJECTS = {
     "cestina": ("cestin", "cesky jazyk", "ceskeho jazyk", "ceskemu jazyk", "ceskym jazyk", "citan", "cteni",
                 "ctenar", "slabik", "abeced", "pismen", "pravopis", "sloh", "literatur", "literarni", "vyjmenovan",
                 "slovensky jazyk", "slovencin", "pisank", "psani", "mluvnic", "jazykova vychova", "komunikacni",
-                "diktat", "grafomotor"),
+                "diktat", "grafomotor", " cist"),
     "matematika": ("matemati", "pocitan", "pocitame", "pocetnik", "aritmeti", "geometri", "priklad", "cisla",
                    "nasobil", "zlomk"),
     "prvouka": ("prvouk", "clovek a jeho svet", "prvoucky"),
@@ -155,6 +155,15 @@ def _parts(text: str) -> frozenset[str]:
     return frozenset(parts)
 
 
+def _description_grades(description: str | None, title: str) -> frozenset[str]:
+    """Grades told by a description, which also mentions neighbouring stages ("for the first grade, after
+    the preschool…"): numbered grades win over MŠ/SŠ, and SŠ is not taken for a title "… pro ZŠ"."""
+    found = _grades(plain(description))
+    if found - {"MS", "SS"}:
+        return found - {"MS", "SS"}
+    return found - {"SS"} if " zs " in title else found
+
+
 def profile_of_item(title: str | None, hints: dict | None, url: str | None = None) -> Profile:
     """Grade from the shop's grade, else the title (and category), the address, the type (a primer) and
     last the product description (read from the product page)."""
@@ -162,7 +171,7 @@ def profile_of_item(title: str | None, hints: dict | None, url: str | None = Non
     text = plain(" ".join(filter(None, [title, hints.get("grade"), hints.get("category")])))
     kind = _type(plain(title))
     grades = (_grades(plain(hints.get("grade"))) or _grades(text) or _grades(_url_text(url))
-              or TYPE_GRADES.get(kind or "", frozenset()) or _grades(plain(hints.get("description"))))
+              or TYPE_GRADES.get(kind or "", frozenset()) or _description_grades(hints.get("description"), text))
     return Profile(grades=grades, subjects=_subjects(plain(title)) or _subjects(text), type=kind,
                    parts=_parts(text), bundle=bool(BUNDLE.search(title or "")))
 

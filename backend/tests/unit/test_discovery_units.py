@@ -130,3 +130,13 @@ def test_description_from_structured_data_or_meta_but_not_the_title():
     assert description_of(ld, "https://shop.example.cz/x") == "Pro 3. ročník ZŠ"
     meta = '<meta name="description" content="Grafomotorika">'
     assert description_of(meta, "https://shop.example.cz/x", "Grafomotorika") is None
+
+
+def test_description_grades_prefer_numbered_grades():
+    from app.services.comparable import profile_of_item
+
+    reading = "Pracovní sešit pro první ročník, navazuje na přípravu předškoláků v mateřské škole."
+    assert profile_of_item("Čtení s radostí, pracovní sešit", {"description": reading}).grades == {"1"}
+    chemistry = "Pro žáky základních škol a nižších ročníků víceletých gymnázií."
+    assert profile_of_item("Přehled chemie pro ZŠ", {"description": chemistry}).grades == frozenset()
+    assert profile_of_item("Učíme se číst, učebnice", {"description": "pro první ročník"}).subjects == {"cestina"}
