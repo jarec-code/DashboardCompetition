@@ -81,3 +81,9 @@ def test_a_condition_amount_is_not_a_price():
     far = "<h1>Kniha</h1>" + "<p>text</p>" * 200 + "<p>Doprava zdarma od 700 Kč</p>"
     with pytest.raises(ParseError):
         parse_heuristic(PageContext(html=far, url="https://x.cz/", config={}))
+
+
+def test_cart_and_login_pages_are_never_entry_pages_nor_followed():
+    home = ('<a href="/obchod/index.php?item=nakupni-kosik">Košík</a><a href="/obchod/?item=prihlasit">Přihlásit</a>'
+            '<a href="/obchod/?item=zaregistrovat">Registrace</a><a href="/obchod/?item=nabidka">E-shop</a>')
+    assert _catalogue_links(home, "https://www.nns.cz/", "nns.cz") == ["https://www.nns.cz/obchod/?item=nabidka"]

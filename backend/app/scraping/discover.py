@@ -52,8 +52,14 @@ def query_says_product(query: str) -> bool:
     return numeric_key or detail_value
 
 
+# Values that name a cart, login or registration page, e.g. /obchod/?item=nakupni-kosik or ?page=login
+SKIP_VALUE = re.compile(r"(kosik|košík|cart|basket|prihlas|přihlás|login|logout|odhlas|registr|zaregistr|regdvd|"
+                        r"objednavk|objednávk|quick_order|checkout|wishlist|ucet|účet|account)", re.I)
+
+
 def skipped_query(query: str) -> bool:
-    return any(SKIP_QUERY.match(k) for k, _ in parse_qsl(query, keep_blank_values=True))
+    pairs = parse_qsl(query, keep_blank_values=True)
+    return any(SKIP_QUERY.match(k) for k, _ in pairs) or any(SKIP_VALUE.search(v) for _, v in pairs)
 
 
 def _score(path: str, query: str = "") -> int:

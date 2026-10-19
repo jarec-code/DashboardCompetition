@@ -45,7 +45,7 @@ from app.models import (
     ScrapeRun,
 )
 from app.scraping import catalog, crawl
-from app.scraping.discover import discover_links, query_says_product
+from app.scraping.discover import discover_links, query_says_product, skipped_query
 from app.scraping.fetcher import Fetcher, FetchError
 from app.scraping.parsers.base import Extracted, PageContext, ParseError
 from app.scraping.parsers.registry import get_parser
@@ -1283,8 +1283,8 @@ def _catalogue_links(html: str, page_url: str, domain: str) -> list[str]:
             continue
         if not catalog._belongs(url, domain) or url in found or url.rstrip("/") == page_url.rstrip("/"):
             continue
-        if query_says_product(urlsplit(url).query):
-            continue  # a product detail, not the catalogue
+        if query_says_product(urlsplit(url).query) or skipped_query(urlsplit(url).query):
+            continue  # a product detail, or a cart / login page, not the catalogue
         image = a.find("img")
         label = " ".join(filter(None, [a.get_text(" ", strip=True), a.get("title"),
                                        image.get("alt") if image else None, image.get("title") if image else None]))
