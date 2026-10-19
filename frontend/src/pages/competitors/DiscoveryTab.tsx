@@ -80,6 +80,7 @@ const FILTERS: { value: string; label: string; match?: ItemMatch; gone?: boolean
   { value: "ignored", label: "Ignorované", match: "ignored" },
   { value: "gone", label: "Zmiznuté", gone: true },
   { value: "incomplete", label: "Neúplné" },
+  { value: "pending", label: "Čaká na načítanie" },
 ];
 const PAGE_SIZE = 50;
 
@@ -387,6 +388,7 @@ function Items({ competitorId, state, readOnly }: { competitorId: number; state:
   const current = FILTERS.find((f) => f.value === filter)!;
   const list = useCatalog(competitorId, { match_status: current.match, item_status: current.gone ? "gone" : "active",
                                           incomplete: filter === "incomplete" || undefined,
+                                          pending: filter === "pending" || undefined,
                                           q: debounced || undefined, page, page_size: PAGE_SIZE });
   const action = useItemAction();
   const act = (id: number, kind: "assign" | "ignore" | "reset", productId?: number) =>
@@ -445,6 +447,7 @@ function Items({ competitorId, state, readOnly }: { competitorId: number; state:
         <SegmentedControl size="xs" value={filter} onChange={(v) => { setFilter(v); setPage(1); }}
                           data={FILTERS.map((f) => ({ value: f.value,
                             label: f.value === "incomplete" ? f.label
+                              : f.value === "pending" ? `${f.label} (${state.counts.pending ?? 0})`
                               : `${f.label} (${(f.gone ? state.counts.gone : state.counts[f.match!]) ?? 0})` }))} />
         <TextInput size="xs" placeholder="Hľadať v názve" leftSection={<IconSearch size={14} />} w={220} value={search}
                    onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }} aria-label="Hľadať v katalógu" />

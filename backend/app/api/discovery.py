@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 
 from app.api.deps import AdminUser, CurrentUser, DbSession
 from app.models import CatalogItem, Competitor, CompetitorProduct, DiscoveryRun, DiscoveryUrl, Product
@@ -59,12 +59,20 @@ def _competitor(db, competitor_id: int) -> Competitor:
     return competitor
 
 
+def _pending():
+    """Addresses found (e.g. in a sitemap) but not read yet: candidates, not products."""
+    return and_(CatalogItem.match_status == "new", CatalogItem.fetch_status.is_(None),
+                CatalogItem.price_from_listing.is_(False), CatalogItem.price.is_(None))
+
+
 def _out(db, competitor: Competitor) -> DiscoveryOut:
     runs = db.scalars(select(DiscoveryRun).where(DiscoveryRun.competitor_id == competitor.id)
                       .order_by(DiscoveryRun.id.desc()).limit(10))
     counts = dict(db.execute(select(CatalogItem.match_status, func.count()).where(
-        CatalogItem.competitor_id == competitor.id, CatalogItem.status == "active")
+        CatalogItem.competitor_id == competitor.id, CatalogItem.status == "active", ~_pending())
         .group_by(CatalogItem.match_status)).all())
+    counts["pending"] = db.scalar(select(func.count(CatalogItem.id)).where(
+        CatalogItem.competitor_id == competitor.id, CatalogItem.status == "active", _pending()))
     counts["gone"] = db.scalar(select(func.count(CatalogItem.id)).where(
         CatalogItem.competitor_id == competitor.id, CatalogItem.status == "gone"))
     return DiscoveryOut(settings=discovery.load(competitor.scrape_config), runs=list(runs), counts=counts)
@@ -174,11 +182,13 @@ def list_catalog(competitor_id: int, db: DbSession, _user: CurrentUser,
                  item_status: Literal["active", "gone"] = "active",
                  q: str | None = Query(default=None, max_length=200),
                  incomplete: bool = False,  # products without a price, title or identifier
+                 pending: bool = False,     # addresses not read yet (shown only when asked for)
                  page: int = Query(default=1, ge=1), page_size: int = Query(default=50, ge=1, le=200)
                  ) -> Page[CatalogItemOut]:
     _competitor(db, competitor_id)
     query = (select(CatalogItem, Product.name).outerjoin(Product, Product.id == CatalogItem.product_id)
              .where(CatalogItem.competitor_id == competitor_id, CatalogItem.status == item_status))
+    query = query.where(_pending() if pending else ~_pending())
     if match_status:
         query = query.where(CatalogItem.match_status == match_status)
     if incomplete:

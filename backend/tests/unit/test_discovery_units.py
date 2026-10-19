@@ -72,3 +72,12 @@ def test_heuristic_prefers_the_price_with_vat_for_everyone():
     only_net = "<h1>Kniha</h1><p>Cena bez DPH: 90 Kč</p>"
     net = parse_heuristic(PageContext(html=only_net, url="https://x.cz/", config={}))
     assert (net.price, net.vat_mode) == (Decimal("90"), "without_vat")
+
+
+def test_a_condition_amount_is_not_a_price():
+    order = parse_heuristic  # "Poštovné ani balné neúčtujeme, je-li fakturovaná částka vyšší než 500,- Kč"
+    with pytest.raises(ParseError, match="nie je cena"):
+        order(PageContext(html=page("jak_objednavat.html"), url="https://prometheus-nakl.cz/", config={}))
+    far = "<h1>Kniha</h1>" + "<p>text</p>" * 200 + "<p>Doprava zdarma od 700 Kč</p>"
+    with pytest.raises(ParseError):
+        parse_heuristic(PageContext(html=far, url="https://x.cz/", config={}))

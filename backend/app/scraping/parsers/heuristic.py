@@ -24,6 +24,10 @@ _MONEY = r"(\d{1,3}(?:[  .]\d{3})*(?:[,.]\d{1,2})?|\d+(?:[,.]\d{1,2})?)\s*(?:,-
 _LABELLED = re.compile(r"((?:\w+\s+)?(?:cena|price)(?:[ \t]+[\w.%]+){0,4}?)\s*:?\s*" + _MONEY, re.I)
 _WITHOUT_VAT = re.compile(r"bez\s+dph|without\s+vat|excl", re.I)
 _WITH_VAT = re.compile(r"(vč\.?|včetně|vrátane|s|with)\s+(dph|vat)", re.I)
+# Words before an amount that make it a condition, not a price ("vyšší než 500 Kč", "doprava zdarma od 700 Kč").
+_THRESHOLD = re.compile(r"(vyšší|vyšš|nižší|než|nad|od|až|do|minimáln\w*|maximáln\w*|zdarma|poštovné|poštovného|"
+                        r"doprav\w*|balné|sleva|slevu|zľava|ušetř\w*|ušetr\w*|celkem|spolu|košík\w*)\W*$", re.I)
+UNLABELLED_NEAR_TITLE = 400   # an amount without a label counts only this close after the title
 _MEMBER = re.compile(r"vaše|vaša|your|členská|clenska|pro\s+školy|škol|velkoobchod|veľkoobchod", re.I)
 _ANY_MONEY = re.compile(_MONEY)
 _TITLE_CLASS = re.compile(r"(nazev|název|nazov|title|product[-_]?name|productname|heading|jmeno|titul)", re.I)
@@ -69,11 +73,18 @@ def parse_heuristic(ctx: PageContext) -> Extracted:
         label, amount, currency = min(labelled, key=rank)
         vat_mode = "without_vat" if _WITHOUT_VAT.search(label) else "with_vat" if _WITH_VAT.search(label) else "unknown"
     else:
-        prices = {(a, c) for a, c in _ANY_MONEY.findall(text)}
-        if len(prices) != 1:
+        # One amount without a label is a price only right after the title and not inside a condition
+        # ("Poštovné neúčtujeme, je-li částka vyšší než 500,- Kč" on a "how to order" page is not a price).
+        found = list(_ANY_MONEY.finditer(text))
+        if len({(m.group(1), m.group(2)) for m in found}) != 1:
             raise ParseError("Na stránke sa nenašla cena s návestím (napr. „Cena: 238 Kč“) ani jediná jednoznačná "
                              "cena.")
-        amount, currency = next(iter(prices))
+        match = found[0]
+        start = text.rfind(title, 0, match.start()) if title else -1  # the title closest before the amount
+        near = start >= 0 and 0 <= match.start() - start <= UNLABELLED_NEAR_TITLE
+        if not near or _THRESHOLD.search(text[max(0, match.start() - 40):match.start()]):
+            raise ParseError("Jediná suma na stránke nie je cena produktu (podmienka, poštovné alebo ďaleko od názvu).")
+        amount, currency = match.group(1), match.group(2)
     price = parse_price(amount)
     if price is None or not title:
         raise ParseError("Na stránke sa nenašiel názov alebo cena produktu.")

@@ -64,6 +64,8 @@ MIN_PRICED_SHARE = 0.9           # quality needed to leave the shadow mode
 MAX_COUNT_CHANGE = 0.2           # … and a stable number of products between runs
 SUSPICIOUS_DROP = 0.5            # fewer than half of last run's products: stop instead of marking them gone
 DIAGNOSIS_DAYS = 30              # the chosen methods are tried anew after this
+CLEANUP_EVERY = 20               # requests between corrections of duplicates and boilerplate in a long run
+BOILERPLATE_PAGES = 3            # the same title and price on this many pages of one type: not products
 FORBIDDEN_TO_STOP = 3            # HTTP 403 on this many different pages in a row: the website blocks us
 ENRICH_WINDOW = 500              # items considered when choosing the next product page to read
 EARLY_SAMPLE = 15                # pages of a sitemap read before it is judged (no product: next method)
@@ -456,6 +458,8 @@ class Runner:
             else:
                 self._enrich(url)
             self.run.errors_in_row = 0
+            if self.run.kind == "discovery" and self.run.requests % CLEANUP_EVERY == 0:
+                self._drop_boilerplate()  # long runs: wrong products are corrected on the way, not only at the end
             if self.run.stats.get("forbidden_in_row"):
                 self.run.stats = {**self.run.stats, "forbidden_in_row": 0}
         except FetchError as exc:
@@ -783,9 +787,8 @@ class Runner:
         stats = self._template_stats()
         product_links = [link for link in links if crawl.product_like(link, stats, self.settings.product_pattern)]
         data, _ = self._parse_product(html, response.url)
-        if data is not None:
+        if data is not None and self._crawled_product(url, data, html):
             kind = "product"
-            self._crawled_product(url, data, html)
         elif len(product_links) >= crawl.LISTING_MIN_PRODUCT_LINKS:
             kind = "listing"
         elif any(stats.get(template(link), {}).get("listings") for link in links):
@@ -800,9 +803,15 @@ class Runner:
             follow = product_links if kind == "product" else links  # from a product page: other products only
             self._enqueue(follow, depth=row.depth + 1)
 
-    def _crawled_product(self, url: str, data: Extracted, html: str) -> None:
+    def _crawled_product(self, url: str, data: Extracted, html: str) -> bool:
         """A product page found by the crawler: one catalogue item per page (no second request needed).
         The same title under another URL (same ISBN/EAN) is not added twice."""
+        same = [i for i in self.db.scalars(select(CatalogItem).where(
+            CatalogItem.competitor_id == self.competitor.id, CatalogItem.key != url, CatalogItem.price == data.price))
+            if plain(i.title) == plain(data.title) and template(i.url) == template(url)]
+        if len(same) + 1 >= BOILERPLATE_PAGES:  # the same page shown under many addresses: not a product
+            self._drop_boilerplate_now(url, same)
+            return False
         codes = {v for k, v in (data.identifiers or {}).items() if k in ("isbn", "ean") and v}
         if codes:
             twin = next((i for i in self.db.scalars(select(CatalogItem).where(
@@ -811,7 +820,7 @@ class Runner:
             if twin is not None:
                 self.run.seen_keys = sorted(set(self.run.seen_keys) | {twin.key})
                 self._stat("duplicates")
-                return
+                return True
         self._upsert(catalog.FoundItem(key=url, url=url, title=data.title, price=data.price, currency=data.currency,
                                        identifiers=data.identifiers or {}))
         item = self.db.scalar(select(CatalogItem).where(CatalogItem.competitor_id == self.competitor.id,
@@ -823,6 +832,7 @@ class Runner:
         self.run.seen_keys = sorted(set(self.run.seen_keys) | {url})
         self._stat("products_read")
         self._set_stats(found=len(self.run.seen_keys))
+        return True
 
     # ----- C: listing the source -----
 
@@ -993,6 +1003,28 @@ class Runner:
             return
         self._apply_details(item, data, response.text or "")
         self._enriched(item)
+        self._dedupe_by_identifier(item)
+
+    def _dedupe_by_identifier(self, item: CatalogItem) -> None:
+        """Tabs of one product page ("…/obsah", "…/ukazky") show the same ISBN/EAN: one product, the page with
+        the shortest address; the others are marked as duplicates."""
+        codes = {v for k, v in (item.identifiers or {}).items() if k in ("isbn", "ean") and v}
+        if not codes:
+            return
+        same = [i for i in self.db.scalars(select(CatalogItem).where(
+            CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
+            CatalogItem.fetch_status == "ok", CatalogItem.price_from_listing.is_(False)))
+            if codes & {i.identifiers.get("isbn"), i.identifiers.get("ean")}]
+        if len(same) < 2:
+            return
+        keep = min(same, key=lambda i: (len(urlsplit(i.url).path), i.url))
+        for other in same:
+            if other is keep or other.match_method == "manual":
+                continue
+            other.match_status, other.match_method, other.product_id = "unrelated", None, None
+            other.fetch_status = "not_product"
+            other.enrich_error = f"Duplicitná stránka produktu {keep.url} (rovnaké ISBN/EAN)."
+            self._stat("duplicates")
 
     def _parse_product(self, html: str, url: str) -> tuple[Extracted | None, str]:
         """Product details with the competitor's parser; when that fails, the automatic one (structured data,
@@ -1032,7 +1064,61 @@ class Runner:
 
     # ----- D: matching -----
 
+    def _drop_boilerplate_now(self, url: str, same: list[CatalogItem]) -> None:
+        for item in same:
+            item.match_status, item.match_method, item.product_id = "unrelated", None, None
+            item.fetch_status = "not_product"
+            item.enrich_error = (f"Nie je produkt: rovnaký názov a cena na {len(same) + 1} stránkach tohto typu "
+                                 "(napr. návod na objednávanie).")
+        self._stat("boilerplate", len(same) + 1)
+        self._forget_template(template(url))
+
+    def _drop_boilerplate(self) -> int:
+        """The same title and price on several pages of one page type (a "how to order" page shown for every
+        product) is not a product. Such items are marked as not products and their page type is not followed."""
+        groups: dict[tuple[str, str, Decimal | None], list[CatalogItem]] = {}
+        for item in self.db.scalars(select(CatalogItem).where(
+                CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
+                CatalogItem.price_from_listing.is_(False), CatalogItem.title.is_not(None),
+                CatalogItem.match_method.is_distinct_from("manual"))):
+            groups.setdefault((template(item.url), plain(item.title), item.price), []).append(item)
+        for item in self.db.scalars(select(CatalogItem).where(  # older duplicates of one product (same ISBN/EAN)
+                CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
+                CatalogItem.fetch_status == "ok")):
+            self._dedupe_by_identifier(item)
+        dropped = 0
+        for (tpl, _, _), items in groups.items():
+            if len(items) < BOILERPLATE_PAGES:
+                continue
+            for item in items:
+                item.match_status, item.match_method, item.product_id = "unrelated", None, None
+                item.fetch_status = "not_product"
+                item.enrich_error = (f"Nie je produkt: rovnaký názov a cena na {len(items)} stránkach tohto typu "
+                                     "(napr. návod na objednávanie).")
+                dropped += 1
+            self._forget_template(tpl)
+        if dropped:
+            self._stat("boilerplate", dropped)
+        return dropped
+
+    def _forget_template(self, tpl: str) -> None:
+        """A page type believed to be products is not: no product count, so it is not followed any more."""
+        learned = {k: dict(v) for k, v in self.settings.learned_templates.items()}
+        current = {k: dict(v) for k, v in (self.run.stats.get("templates") or {}).items()}
+        for stats in (learned, current):
+            if tpl in stats:
+                stats[tpl]["products"] = 0
+                stats[tpl]["pages"] = max(stats[tpl]["pages"], crawl.DEAD_AFTER_PAGES)
+            else:
+                stats[tpl] = {"pages": crawl.DEAD_AFTER_PAGES, "products": 0, "listings": 0}
+        self.settings.learned_templates = learned
+        self._set_stats(templates=current)
+        self.db.execute(update(DiscoveryUrl).where(
+            DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.template == tpl[:600],
+            DiscoveryUrl.kind == "product").values(kind="info"))
+
     def _match(self) -> None:
+        self._drop_boilerplate()
         own = OwnCatalogue(self.db)
         existing = self._existing_offers()
         counts = {"matched": 0, "review": 0, "unrelated": 0}

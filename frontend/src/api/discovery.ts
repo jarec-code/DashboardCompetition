@@ -91,7 +91,7 @@ export interface DiscoveryRun {
 export interface DiscoveryState {
   settings: DiscoverySettings;
   runs: DiscoveryRun[];
-  counts: Partial<Record<ItemMatch | "gone", number>>;
+  counts: Partial<Record<ItemMatch | "gone" | "pending", number>>;
 }
 
 export interface DiscoverySettingsInput {
@@ -167,12 +167,14 @@ export function useRunDiscovery(competitorId: number) {
 }
 
 export function useCatalog(competitorId: number, params: { match_status?: ItemMatch; item_status?: "active" | "gone";
-                                                            q?: string; incomplete?: boolean; page: number;
+                                                            q?: string; incomplete?: boolean; pending?: boolean;
+                                                            page: number;
                                                             page_size?: number }) {
   return useQuery({
     queryKey: ["catalog", competitorId, params],
     queryFn: () => api<Page<CatalogItem>>(`/competitors/${competitorId}/catalog${query({
-      ...params, incomplete: params.incomplete ? "true" : undefined })}`),
+      ...params, incomplete: params.incomplete ? "true" : undefined,
+      pending: params.pending ? "true" : undefined })}`),
     placeholderData: keepPreviousData,
   });
 }

@@ -623,3 +623,61 @@ def test_ignored_domain_is_never_suggested_nor_read_and_does_not_restart_detecti
     request_again(db, c)
     run = run_all(db, site)
     assert not run.stats.get("suggestions")  # detected anew: the ignored domain is not suggested again
+
+
+def test_the_same_page_under_many_addresses_is_not_a_product(db):
+    competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
+    # "How to order" pages: the same heading and a labelled amount on every one, linked from every product.
+    order_links = "".join(f'<a href="/objednavka?id_katalog={n}">Jak objednat</a>' for n in range(1, 9))
+    books = "".join(f'<a href="/kniha/{n}">Kniha {n}</a>' for n in range(1, 5))
+    site = FakeSite({
+        "/robots.txt": (200, "User-agent: *\n"), "/": (200, order_links + books),
+        **{f"/objednavka?id_katalog={n}": (200, "<h1>JAK OBJEDNÁVAT</h1><p>Cena: 500 Kč</p>") for n in range(1, 9)},
+        **{f"/kniha/{n}": (200, jsonld_page(f"Kniha {n}", str(100 + n))) for n in range(1, 5)},
+    })
+    run = run_all(db, site)
+    items = list(db.scalars(select(CatalogItem)))
+    assert {i.title for i in items if i.fetch_status != "not_product"} == {f"Kniha {n}" for n in range(1, 5)}
+    assert len([r for r in site.requests if r.startswith("/objednavka")]) <= 5  # the page type is dropped early
+    assert run.stats["boilerplate"] >= 3
+
+
+def test_boilerplate_items_already_in_the_catalogue_are_cleaned_up(db):
+    c = competitor(db, "Prometheus", "https://prometheus-nakl.cz/", "prometheus-nakl.cz")
+    for n in range(1, 6):  # left by an earlier version: "JAK OBJEDNÁVAT" for 500 Kč as five products
+        db.add(CatalogItem(competitor_id=c.id, key=f"https://prometheus-nakl.cz/index.php?cast=1&id_katalog={n}",
+                           url=f"https://prometheus-nakl.cz/index.php?cast=1&id_katalog={n}", title="JAK OBJEDNÁVAT",
+                           price=Decimal("500"), currency="CZK", match_status="new", status="active",
+                           found_by="crawl", fetch_status="ok", enriched_at=datetime.now(UTC), identifiers={},
+                           hints={}, attributes={}, candidates=[], missing_runs=0, price_from_listing=False))
+    db.commit()
+    run_all(db, prometheus_site(), limit=1000)
+    left = db.scalars(select(CatalogItem).where(CatalogItem.title == "JAK OBJEDNÁVAT")).all()
+    assert left and all(i.match_status == "unrelated" and i.fetch_status == "not_product" for i in left)
+
+
+def test_tabs_of_one_product_are_one_product_and_unread_addresses_are_not_listed(client, db):
+    from tests.conftest import login, make_user
+
+    c = competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz", budget_per_night=12)
+    site = prodos_site(products=2)
+    tabs = ("obsah", "namety", "ukazky")  # tabs of the product page: the same title, ISBN and price
+    for tab in tabs:
+        site.pages[f"/cesky-jazyk-1st/slabikar-1/{tab}"] = site.pages["/cesky-jazyk-1st/slabikar-1"]
+    locs = "".join(f"<url><loc>https://ucebnice.example.cz/cesky-jazyk-1st/slabikar-1/{t}</loc></url>" for t in tabs)
+    site.pages["/sitemap.xml"] = (200, site.pages["/sitemap.xml"][1].replace("</urlset>", locs + "</urlset>"))
+    run_all(db, site)
+    by_url = {i.url.removeprefix("https://ucebnice.example.cz"): i for i in db.scalars(select(CatalogItem))}
+    assert by_url["/cesky-jazyk-1st/slabikar-1"].fetch_status == "ok"
+    for tab in tabs:
+        item = by_url[f"/cesky-jazyk-1st/slabikar-1/{tab}"]
+        if item.fetch_status:  # read within the budget: a duplicate of the product page
+            assert item.fetch_status == "not_product" and "Duplicitná stránka" in item.enrich_error
+
+    make_user("admin@example.com")
+    login(client, "admin@example.com")
+    state = client.get(f"/api/competitors/{c.id}/discovery").json()
+    new = client.get(f"/api/competitors/{c.id}/catalog", params={"match_status": "new"}).json()
+    pending = client.get(f"/api/competitors/{c.id}/catalog", params={"pending": True}).json()
+    assert all(i["fetch_status"] for i in new["items"])  # only pages actually read
+    assert pending["total"] == state["counts"]["pending"] and all(i["title"] is None for i in pending["items"])
