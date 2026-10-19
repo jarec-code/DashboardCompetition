@@ -880,7 +880,8 @@ def test_spn_is_read_from_its_shop_naseucebnice_cz(db):
     assert (item.url, item.price, item.price_from_listing, item.identifiers) == (
         "https://www.naseucebnice.cz/matematika-1", Decimal("99.01"), True, {"ean": "9788072300001"})
     assert item.title == 'Matematika 2 pro ZŠ, pracovní sešit "nová"'
-    assert item.hints == {"availability": "out_of_stock", "code": "6001", "regular_price": "129.00"}
+    assert item.hints == {"availability": "out_of_stock", "code": "6001", "regular_price": "129.00",
+                          "format": "printed"}
 
 
 def test_one_priced_page_is_not_enough_to_track_automatically(db):
@@ -926,3 +927,43 @@ def test_a_description_shared_by_the_whole_website_is_not_the_products():
     shared = "Učebnice pro 1. stupeň ZŠ od roku 1990"
     assert profile_of_item("Grafomotorika", {"description": shared}).grades == frozenset("12345")
     assert profile_of_item("Grafomotorika", {}).grades == frozenset()  # what _match passes for a shared text
+
+
+def test_printed_book_is_not_matched_with_an_interactive_textbook_and_such_offers_stop(db):
+    from app.scraping.sites import naseucebnice_cz
+
+    c = competitor(db, "SPN", "https://www.spn.cz/", "spn.cz", mode="auto")
+    interactive = product(db, "Interaktivní učebnice Hravá hudební výchova 1", "490", category="Interaktivní výuka",
+                          attributes={"grade": "1. ročník", "subject": "Hudební výchova", "type": "Učebnice"})
+    printed = product(db, "Hravá hudební výchova 1 - učebnice", "149",
+                      attributes={"grade": "1. ročník", "subject": "Hudební výchova", "type": "Učebnice"})
+    music = {**spn_book(1, 14500), "name": "Hudební výchova 1 pro ZŠ, učebnice", "page_path": "hv-1"}
+    others = [spn_book(n, 9900) for n in range(2, 10)]
+    # Tracked by an earlier version: the printed SPN book matched with our interactive textbook.
+    offer = CompetitorProduct(competitor_id=c.id, product_id=interactive.id, variant="",
+                              product_url="https://www.naseucebnice.cz/hv-1", matching_method="attributes",
+                              match_status="matched", match_score=Decimal("1"), status="active", price_source="listing")
+    db.add(offer)
+    db.flush()
+    db.add(CatalogItem(competitor_id=c.id, key="naseucebnice:hv-1", url="https://www.naseucebnice.cz/hv-1",
+                       title="Hudební výchova 1 pro ZŠ, učebnice", price=Decimal("145"), currency="CZK",
+                       match_status="matched", match_method="attributes", product_id=interactive.id,
+                       offer_id=offer.id, status="active", identifiers={}, hints={}, attributes={}, candidates=[],
+                       missing_runs=0, price_from_listing=True, first_seen_at=datetime.now(UTC)))
+    db.commit()
+    start = naseucebnice_cz.start_urls()[0].removeprefix(naseucebnice_cz.SHOP)
+    site = FakeSite({"/robots.txt": (200, "User-agent: *\n"),
+                     start: (200, naseucebnice_page([music] + others, 0, 9))})
+    run = run_all(db, site)
+    assert run.stats["rematched"] == 1
+    db.refresh(offer)
+    assert (offer.status, offer.product_id) == ("active", printed.id)  # the same offer, now with the printed book
+    item = db.scalar(select(CatalogItem).where(CatalogItem.key == "naseucebnice:hv-1"))
+    assert item.attributes["digital"] is False and item.product_id == printed.id and item.offer_id == offer.id
+
+    db.delete(printed)  # no printed counterpart any more: tracking stops
+    db.commit()
+    request_again(db, c)
+    run = run_all(db, site)
+    db.refresh(offer)
+    assert run.stats["untracked"] == 1 and offer.status == "archived"

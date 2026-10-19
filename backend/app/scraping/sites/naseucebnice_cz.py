@@ -71,7 +71,8 @@ def read(text: str, page_url: str):
         value = _price(printed.get("price_with_vat")) if printed else None
         if not row.get("page_path") or value is None:
             continue  # only licences of an interactive textbook, or free: not comparable
-        hints: dict[str, Any] = {"availability": "in_stock" if printed.get("is_in_stock") else "out_of_stock"}
+        hints: dict[str, Any] = {"availability": "in_stock" if printed.get("is_in_stock") else "out_of_stock",
+                                 "format": "printed"}  # the price of the printed variant
         if row.get("code"):
             hints["code"] = str(row["code"])
         regular = _price(printed.get("original_price_with_vat"))

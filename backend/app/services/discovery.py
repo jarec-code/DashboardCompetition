@@ -52,7 +52,7 @@ from app.scraping.parsers.base import Extracted, PageContext, ParseError
 from app.scraping.parsers.registry import get_parser
 from app.scraping.urlnorm import safe_canonical, template
 from app.services import alerts, pricing, scheduling
-from app.services.comparable import OwnCatalogue, plain, profile_of_item
+from app.services.comparable import Decision, OwnCatalogue, plain, profile_of_item
 from app.services.urls import InvalidUrl, normalize_url
 
 log = logging.getLogger("discovery")
@@ -1141,11 +1141,12 @@ class Runner:
             CatalogItem.enrich_error.is_(None))))
         shared = Counter((i.hints or {}).get("description") for i in items)  # the website's text, not the product's
         for item in items:
-            if item.match_method in ("manual", "existing") or (item.match_status == "matched" and item.offer_id):
-                continue
+            if item.match_method in ("manual", "existing") or (item.match_status == "matched" and item.offer_id
+                                                                and item.match_method != "attributes"):
+                continue  # decided by a person, an identifier or an offer that existed before
             if not item.price_from_listing and item.enriched_at is None:
                 continue  # not read yet (budget): next run
-            offer = existing.get(item.url) or existing.get(plain(item.title))
+            offer = None if item.offer_id else existing.get(item.url) or existing.get(plain(item.title))
             if offer is not None:
                 item.offer_id, item.product_id = offer.id, offer.product_id
                 item.match_status, item.match_method = "matched", "existing"
@@ -1155,6 +1156,8 @@ class Runner:
             if shared[hints.get("description")] >= SHARED_DESCRIPTION:
                 hints = {k: v for k, v in hints.items() if k != "description"}
             decision, profile = own.decide(item.title, hints, item.identifiers, item.url)
+            if item.offer_id and (decision.status != "matched" or decision.product_id != item.product_id):
+                self._recheck_offer(item, decision)
             item.attributes = {**profile.as_dict(), "note": decision.note}
             item.candidates = decision.candidates
             item.match_status, item.match_method = decision.status, decision.method
@@ -1167,7 +1170,8 @@ class Runner:
         found: dict[str, CompetitorProduct] = {}
         rows = self.db.execute(select(CompetitorProduct, CurrentPrice.title).outerjoin(
             CurrentPrice, CurrentPrice.competitor_product_id == CompetitorProduct.id).where(
-            CompetitorProduct.competitor_id == self.competitor.id))
+            CompetitorProduct.competitor_id == self.competitor.id, CompetitorProduct.status != "archived",
+            CompetitorProduct.matching_method.is_distinct_from("attributes")))  # not ours to re-check
         for offer, title in rows:
             found[offer.product_url] = offer
             if title:
@@ -1176,6 +1180,24 @@ class Runner:
 
     # ----- tracking matched items (automatic mode) -----
 
+    def _recheck_offer(self, item: CatalogItem, decision: Decision) -> None:
+        """An offer created by attribute matching that the current rules decide differently (e.g. a printed
+        book matched with an interactive textbook before such pairs were excluded): it follows our other
+        product (the competitor's price history stays), or tracking stops."""
+        offer = self.db.get(CompetitorProduct, item.offer_id)
+        if offer is None or offer.matching_method != "attributes":
+            return
+        if decision.status == "matched" and decision.method == "attributes":
+            offer.product_id = decision.product_id
+            self._stat("rematched")
+            log.info("Offer %s of %r now compares with product %s", offer.id, item.title, decision.product_id)
+            return
+        if offer.status != "archived":
+            offer.status = "archived"
+            self._stat("untracked")
+            log.info("Offer %s archived: the match of %r is not confirmed (%s)", offer.id, item.title, decision.note)
+        item.offer_id = None
+
     def _track(self) -> int:
         created = 0
         items = self.db.scalars(select(CatalogItem).where(
@@ -1183,6 +1205,14 @@ class Runner:
             CatalogItem.match_status == "matched", CatalogItem.offer_id.is_(None),
             CatalogItem.product_id.is_not(None)))
         for item in items:
+            stopped = self.db.scalar(select(CompetitorProduct).where(
+                CompetitorProduct.competitor_id == self.competitor.id, CompetitorProduct.product_url == item.url,
+                CompetitorProduct.variant == "", CompetitorProduct.status == "archived"))
+            if stopped is not None:  # tracked before and stopped: the same offer again, with its price history
+                stopped.status, stopped.product_id = "active", item.product_id
+                item.offer_id = stopped.id
+                created += 1
+                continue
             offer = CompetitorProduct(
                 competitor_id=self.competitor.id, product_url=item.url, variant="", product_id=item.product_id,
                 matching_method=item.match_method if item.match_method in ("identifier", "attributes") else "manual",

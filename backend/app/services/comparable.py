@@ -64,6 +64,17 @@ TYPES = (
 # exported as "Pracovní sešit", but it compares with other publishers' primers).
 TITLE_TYPES = ("metodika", "pisanka", "citanka", "slabikar", "abeceda")
 BUNDLE = re.compile(r"\b(komplet|balic|sada)", re.I)
+# Digital editions (on plain() text): "Interaktivní učebnice Hravá hudební výchova 1", "… (na 1 rok)",
+# "licence", "e-kniha", "v PDF". Not "Interaktivní plakát" (a poster with an app) nor "také E-KNIHA" (a printed
+# book that also has an e-book).
+DIGITAL = re.compile(r"\binteraktivn[a-z]* (?:[a-z]+ )?(?:ucebnic|sesit|pisank|titul|vyuk|cvicebnic|citank|slabikar"
+                     r"|kurz)|\blicenc|multilicenc|\be-?knih|\be-?book|\bpdf\b|\bonline\b|\bna \d+ (?:rok|mesic)"
+                     r"|\bukazka - \d")
+ALSO_DIGITAL = re.compile(r"\btake e-?knih")
+
+
+def is_digital(text: str) -> bool:
+    return bool(DIGITAL.search(text)) and not ALSO_DIGITAL.search(text)
 REVISED = re.compile(r"\s*[-–—]?\s*(revidovan[eé]|rev\.)\s*RVP(\s*ZV)?\s*$", re.I)
 _GRADE = re.compile(r"(\d)\s*\.?\s*(?:-\s*(\d)\s*\.?\s*)?(?:rocnik|trid)")  # on plain() text
 _PART = re.compile(r"(\d)\s*\.\s*dil|dil\s*(\d)")
@@ -90,11 +101,12 @@ class Profile:
     type: str | None = None
     parts: frozenset[str] = frozenset()
     bundle: bool = False
+    digital: bool = False  # an interactive textbook, a licence, an e-book, a PDF: not comparable with print
     extra: dict = field(default_factory=dict)
 
     def as_dict(self) -> dict:
         return {"grades": sorted(self.grades), "subjects": sorted(self.subjects), "type": self.type,
-                "parts": sorted(self.parts), "bundle": self.bundle}
+                "parts": sorted(self.parts), "bundle": self.bundle, "digital": self.digital}
 
 
 def _subject_number() -> re.Pattern:
@@ -173,7 +185,8 @@ def profile_of_item(title: str | None, hints: dict | None, url: str | None = Non
     grades = (_grades(plain(hints.get("grade"))) or _grades(text) or _grades(_url_text(url))
               or TYPE_GRADES.get(kind or "", frozenset()) or _description_grades(hints.get("description"), text))
     return Profile(grades=grades, subjects=_subjects(plain(title)) or _subjects(text), type=kind,
-                   parts=_parts(text), bundle=bool(BUNDLE.search(title or "")))
+                   parts=_parts(text), bundle=bool(BUNDLE.search(title or "")),
+                   digital=hints.get("format") == "digital" or is_digital(plain(title)))
 
 
 def profile_of_product(product: Product) -> Profile:
@@ -186,7 +199,9 @@ def profile_of_product(product: Product) -> Profile:
     subjects = _subjects(plain(a.get("subject"))) or _subjects(name) or _subjects(plain(product.category))
     from_name = _type(name)
     kind = from_name if from_name in TITLE_TYPES else _type(plain(a.get("type"))) or from_name
-    return Profile(grades=grades, subjects=subjects, type=kind, parts=_parts(name), bundle=bool(product.is_bundle))
+    digital = "interaktivni vyuka" in plain(product.category) or is_digital(name)  # eTaktik: "Interaktivní výuka"
+    return Profile(grades=grades, subjects=subjects, type=kind, parts=_parts(name), bundle=bool(product.is_bundle),
+                   digital=digital)
 
 
 @dataclass
@@ -227,6 +242,8 @@ class OwnCatalogue:
             own = self.profiles[product.id]
             if own.bundle != item.bundle or not own.grades or not (item.grades <= own.grades):
                 continue
+            if own.digital != item.digital:
+                continue  # a printed book is not comparable with an interactive textbook or a licence
             if not own.subjects or not (item.subjects & own.subjects):
                 continue
             if item.type and own.type and item.type != own.type:

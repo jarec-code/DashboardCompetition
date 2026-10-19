@@ -140,3 +140,15 @@ def test_description_grades_prefer_numbered_grades():
     chemistry = "Pro žáky základních škol a nižších ročníků víceletých gymnázií."
     assert profile_of_item("Přehled chemie pro ZŠ", {"description": chemistry}).grades == frozenset()
     assert profile_of_item("Učíme se číst, učebnice", {"description": "pro první ročník"}).subjects == {"cestina"}
+
+
+def test_digital_editions():
+    from app.services.comparable import is_digital, plain
+
+    for title in ("Interaktivní učebnice Hravá hudební výchova 1",
+                  "Interaktivní pracovní učebnice Upgrade 7 (na 1 rok)",
+                  "Pracovní listy pro 3 ročník v PDF", "Fyzika – pouze jako E-KNIHA", "Multilicence pro školu"):
+        assert is_digital(plain(title)), title
+    for title in ("Interaktivní plakát - lidské tělo", "Matematika pro SŠ – Funkce – také E-KNIHA",
+                  "Hudební výchova 1 pro ZŠ, učebnice", "Sada interaktivních pomůcek pro 1. ročník"):
+        assert not is_digital(plain(title)), title
