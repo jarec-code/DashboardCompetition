@@ -242,7 +242,7 @@ class Fetcher:
     def _load_robots(self, origin: str) -> urllib.robotparser.RobotFileParser | None:
         """None means 'no rules' (robots.txt missing)."""
         try:
-            result = self.fetch(origin + "/robots.txt", timeout=10, max_bytes=512 * 1024)
+            result = self.fetch(origin + "/robots.txt", timeout=20, max_bytes=512 * 1024)
         except FetchError as exc:
             if exc.status is not None and 400 <= exc.status < 500 and exc.status != 429:
                 return None  # no robots.txt: everything allowed

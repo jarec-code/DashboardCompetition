@@ -50,6 +50,9 @@ class Worker:
                 self._last_cleanup = time.monotonic()
                 removed = housekeeping.cleanup(db)
                 db.commit()
+                cleaned = discovery.clean_all(db)  # duplicates and shared pages in competitors' catalogues
+                if any(cleaned.values()):
+                    log.info("Corrected competitor catalogues: %s", cleaned)
                 if any(removed.values()):
                     log.info("Removed old diagnostic data: %s", removed)
             if time.monotonic() - self._last_alerts > ALERTS_INTERVAL_SECONDS:

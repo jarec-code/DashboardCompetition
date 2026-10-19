@@ -681,3 +681,35 @@ def test_tabs_of_one_product_are_one_product_and_unread_addresses_are_not_listed
     pending = client.get(f"/api/competitors/{c.id}/catalog", params={"pending": True}).json()
     assert all(i["fetch_status"] for i in new["items"])  # only pages actually read
     assert pending["total"] == state["counts"]["pending"] and all(i["title"] is None for i in pending["items"])
+
+
+def test_worker_housekeeping_corrects_duplicates_also_of_a_paused_competitor(db):
+    c = competitor(db, "Prodos", "https://ucebnice.org/", "ucebnice.org", mode="shadow")
+    settings = discovery.load(c.scrape_config)
+    discovery.save(c.scrape_config, settings.model_copy(update={"paused_until": datetime.now(UTC) + timedelta(days=7)}))
+    for path in ("/prirodopis/9novy", "/prirodopis/9novy/obsah", "/prirodopis/9novy/namety",
+                 "/prirodopis/9novy/ke_stazeni", "/prirodopis/9psnovy"):
+        isbn = "9788072305353" if path.endswith("9psnovy") else "9788072305346"
+        db.add(CatalogItem(competitor_id=c.id, key=f"https://ucebnice.org{path}", url=f"https://ucebnice.org{path}",
+                           title="Přírodopis 9 – Geologie, Ekologie", price=Decimal("159"), currency="CZK",
+                           identifiers={"isbn": isbn}, match_status="new", status="active", fetch_status="ok",
+                           found_by="sitemap", enriched_at=datetime.now(UTC), hints={}, attributes={}, candidates=[],
+                           missing_runs=0, price_from_listing=False))
+    db.commit()
+    assert discovery.clean_all(db) == {"duplicates": 3, "boilerplate": 0}
+    products = db.scalars(select(CatalogItem.url).where(CatalogItem.fetch_status == "ok")).all()
+    assert sorted(products) == ["https://ucebnice.org/prirodopis/9novy", "https://ucebnice.org/prirodopis/9psnovy"]
+    assert discovery.clean_all(db) == {"duplicates": 0, "boilerplate": 0}  # nothing more to do
+
+
+def test_a_temporarily_unavailable_website_is_paused_for_a_day_only(db):
+    c = competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz")
+    site = prodos_site()
+    for n in range(1, 7):
+        site.pages[f"/cesky-jazyk-1st/slabikar-{n}"] = (503, "Service unavailable")
+    for p in ("nakupovani", "obchodni-podminky", "reklamacni-rad", "odkazy", "uvod", "mapa-webu"):
+        site.pages[f"/{p}"] = (503, "Service unavailable")
+    run = run_all(db, site)
+    assert run.status == "stopped" and "dočasne nedostupný" in run.error
+    paused = settings_of(db, c).paused_until - datetime.now(UTC)
+    assert timedelta(hours=23) < paused < timedelta(hours=25)

@@ -157,6 +157,7 @@ class DiscoverySettings(BaseModel):
     last_error: str | None = None
     paused_until: datetime | None = None
     shadow_ok_runs: int = 0
+    temporary_pauses: int = 0  # pauses after temporary errors in a row (1, 2, 4, 7 days)
     budget_date: str | None = None
     budget_used: int = 0
 
@@ -351,9 +352,9 @@ def request_run(config: ScrapeConfig) -> None:
 class Stop(Exception):
     """Stop the run (and pause discovery of the competitor when `pause` is set)."""
 
-    def __init__(self, message: str, pause: bool = False, status: str = "stopped"):
+    def __init__(self, message: str, pause: bool = False, status: str = "stopped", days: int = PAUSE_DAYS):
         super().__init__(message)
-        self.pause, self.status = pause, status
+        self.pause, self.status, self.days = pause, status, days
 
 
 class Runner:
@@ -425,7 +426,7 @@ class Runner:
                 return True
             return False
         except Stop as exc:
-            self._stop(str(exc), exc.pause, exc.status)
+            self._stop(str(exc), exc.pause, exc.status, exc.days)
             return True
 
     def _next_url(self) -> str | None:
@@ -519,16 +520,22 @@ class Runner:
         self.run.errors_in_row += 1
         self._set_stats(last_error=str(exc)[:300])
         if self.run.errors_in_row >= ERRORS_TO_STOP:
+            if exc.kind == "temporary":  # timeouts, server errors: the website may be down for a while
+                days = min(PAUSE_DAYS, 2 ** self.settings.temporary_pauses)
+                self.settings.temporary_pauses += 1
+                raise Stop(f"{ERRORS_TO_STOP} neúspešné požiadavky za sebou ({exc}). Web je zrejme dočasne "
+                           f"nedostupný; objavovanie pokračuje o {days} {'deň' if days == 1 else 'dni'}.",
+                           pause=True, days=days)
             raise Stop(f"{ERRORS_TO_STOP} neúspešné požiadavky za sebou ({exc}). Objavovanie sa pozastavuje na "
                        f"{PAUSE_DAYS} dní.", pause=True)
         if self.run.phase == "list" and self.run.queue and exc.kind == "permanent":
             self.run.queue = self.run.queue[1:]  # a broken page of the source: skip it
 
-    def _stop(self, message: str, pause: bool, status: str) -> None:
+    def _stop(self, message: str, pause: bool, status: str, days: int = PAUSE_DAYS) -> None:
         self.run.status, self.run.error, self.run.finished_at = status, message[:2000], self.now
         self.settings.last_error = message[:500]
         if pause:
-            self.settings.paused_until = self.now + timedelta(days=PAUSE_DAYS)
+            self.settings.paused_until = self.now + timedelta(days=days)
             self.settings.shadow_ok_runs = 0
         if self.run.kind == "discovery":
             self.settings.next_run_at = self.now + timedelta(days=self.settings.interval_days)
@@ -1006,25 +1013,9 @@ class Runner:
         self._dedupe_by_identifier(item)
 
     def _dedupe_by_identifier(self, item: CatalogItem) -> None:
-        """Tabs of one product page ("…/obsah", "…/ukazky") show the same ISBN/EAN: one product, the page with
-        the shortest address; the others are marked as duplicates."""
-        codes = {v for k, v in (item.identifiers or {}).items() if k in ("isbn", "ean") and v}
-        if not codes:
-            return
-        same = [i for i in self.db.scalars(select(CatalogItem).where(
-            CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
-            CatalogItem.fetch_status == "ok", CatalogItem.price_from_listing.is_(False)))
-            if codes & {i.identifiers.get("isbn"), i.identifiers.get("ean")}]
-        if len(same) < 2:
-            return
-        keep = min(same, key=lambda i: (len(urlsplit(i.url).path), i.url))
-        for other in same:
-            if other is keep or other.match_method == "manual":
-                continue
-            other.match_status, other.match_method, other.product_id = "unrelated", None, None
-            other.fetch_status = "not_product"
-            other.enrich_error = f"Duplicitná stránka produktu {keep.url} (rovnaké ISBN/EAN)."
-            self._stat("duplicates")
+        """Tabs of one product page ("…/obsah", "…/ukazky") show the same ISBN/EAN: one product."""
+        if {v for k, v in (item.identifiers or {}).items() if k in ("isbn", "ean") and v}:
+            self._stat("duplicates", _dedupe(self.db, self.competitor.id))
 
     def _parse_product(self, html: str, url: str) -> tuple[Extracted | None, str]:
         """Product details with the competitor's parser; when that fails, the automatic one (structured data,
@@ -1071,51 +1062,24 @@ class Runner:
             item.enrich_error = (f"Nie je produkt: rovnaký názov a cena na {len(same) + 1} stránkach tohto typu "
                                  "(napr. návod na objednávanie).")
         self._stat("boilerplate", len(same) + 1)
-        self._forget_template(template(url))
+        _forget_template(self.db, self.competitor, self.settings, template(url))
+        current = {k: dict(v) for k, v in (self.run.stats.get("templates") or {}).items()}
+        current[template(url)] = {"pages": crawl.DEAD_AFTER_PAGES, "products": 0, "listings": 0}
+        self._set_stats(templates=current)
 
     def _drop_boilerplate(self) -> int:
-        """The same title and price on several pages of one page type (a "how to order" page shown for every
-        product) is not a product. Such items are marked as not products and their page type is not followed."""
-        groups: dict[tuple[str, str, Decimal | None], list[CatalogItem]] = {}
-        for item in self.db.scalars(select(CatalogItem).where(
-                CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
-                CatalogItem.price_from_listing.is_(False), CatalogItem.title.is_not(None),
-                CatalogItem.match_method.is_distinct_from("manual"))):
-            groups.setdefault((template(item.url), plain(item.title), item.price), []).append(item)
-        for item in self.db.scalars(select(CatalogItem).where(  # older duplicates of one product (same ISBN/EAN)
-                CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
-                CatalogItem.fetch_status == "ok")):
-            self._dedupe_by_identifier(item)
-        dropped = 0
-        for (tpl, _, _), items in groups.items():
-            if len(items) < BOILERPLATE_PAGES:
-                continue
-            for item in items:
-                item.match_status, item.match_method, item.product_id = "unrelated", None, None
-                item.fetch_status = "not_product"
-                item.enrich_error = (f"Nie je produkt: rovnaký názov a cena na {len(items)} stránkach tohto typu "
-                                     "(napr. návod na objednávanie).")
-                dropped += 1
-            self._forget_template(tpl)
-        if dropped:
-            self._stat("boilerplate", dropped)
-        return dropped
-
-    def _forget_template(self, tpl: str) -> None:
-        """A page type believed to be products is not: no product count, so it is not followed any more."""
-        learned = {k: dict(v) for k, v in self.settings.learned_templates.items()}
-        current = {k: dict(v) for k, v in (self.run.stats.get("templates") or {}).items()}
-        for stats in (learned, current):
-            if tpl in stats:
-                stats[tpl]["products"] = 0
-                stats[tpl]["pages"] = max(stats[tpl]["pages"], crawl.DEAD_AFTER_PAGES)
-            else:
-                stats[tpl] = {"pages": crawl.DEAD_AFTER_PAGES, "products": 0, "listings": 0}
-        self.settings.learned_templates = learned
-        self._set_stats(templates=current)
-        self.db.execute(update(DiscoveryUrl).where(
-            DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.template == tpl[:600],
-            DiscoveryUrl.kind == "product").values(kind="info"))
+        """Duplicates and shared pages are not products (see clean_catalog); learned page types are updated."""
+        result = clean_catalog(self.db, self.competitor, self.settings)
+        if result["templates"]:
+            current = {k: dict(v) for k, v in (self.run.stats.get("templates") or {}).items()}
+            for tpl in result["templates"]:
+                current[tpl] = {**current.get(tpl, {"listings": 0}), "products": 0,
+                                "pages": max(current.get(tpl, {}).get("pages", 0), crawl.DEAD_AFTER_PAGES)}
+            self._set_stats(templates=current)
+        for key in ("boilerplate", "duplicates"):
+            if result[key]:
+                self._stat(key, result[key])
+        return result["boilerplate"]
 
     def _match(self) -> None:
         self._drop_boilerplate()
@@ -1204,6 +1168,7 @@ class Runner:
                         templates=_top_templates(stats.get("templates") or {}))
         self.run.status, self.run.finished_at = ("partial" if incomplete else "succeeded"), self.now
         self.settings.last_success_at, self.settings.last_error = self.now, None
+        self.settings.temporary_pauses = 0
         self.settings.learned_templates = crawl.merged(self.settings.learned_templates, stats.get("templates") or {})
         would_track = self.db.scalar(select(func.count(CatalogItem.id)).where(
             CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
@@ -1415,3 +1380,83 @@ def _enrich_rank(tpl: str, stats: dict[str, dict[str, int]], pattern: str | None
     if not known or not known["pages"]:
         return 1 + (0 if urlsplit(url).path.count("/") >= 2 else 1)  # deeper paths are more often products
     return 3
+
+
+# ---------- catalogue clean-up (runs and the worker's housekeeping) ----------
+
+def _not_product(item: CatalogItem, reason: str) -> None:
+    item.match_status, item.match_method, item.product_id = "unrelated", None, None
+    item.fetch_status, item.enrich_error = "not_product", reason[:500]
+
+
+def _dedupe(db: Session, competitor_id: int) -> int:
+    """Pages with the same ISBN/EAN are one product: the shortest address stays, the others are duplicates
+    (tabs like "…/obsah", "…/ukazky", "…/ke_stazeni" of a product page)."""
+    groups: dict[str, list[CatalogItem]] = {}
+    for item in db.scalars(select(CatalogItem).where(
+            CatalogItem.competitor_id == competitor_id, CatalogItem.status == "active",
+            CatalogItem.fetch_status == "ok", CatalogItem.price_from_listing.is_(False))):
+        for code in {v for k, v in (item.identifiers or {}).items() if k in ("isbn", "ean") and v}:
+            groups.setdefault(code, []).append(item)
+    marked = 0
+    for items in groups.values():
+        if len(items) < 2:
+            continue
+        keep = next((i for i in items if i.match_method == "manual"), None) or \
+            min(items, key=lambda i: (len(urlsplit(i.url).path), i.url))
+        for other in items:
+            if other is not keep and other.match_method != "manual" and other.fetch_status == "ok":
+                _not_product(other, f"Duplicitná stránka produktu {keep.url} (rovnaké ISBN/EAN).")
+                marked += 1
+    return marked
+
+
+def _forget_template(db: Session, competitor: Competitor, settings: DiscoverySettings, tpl: str) -> None:
+    """A page type believed to be products is not: no product count, so it is not followed any more."""
+    learned = {k: dict(v) for k, v in settings.learned_templates.items()}
+    learned[tpl] = {**learned.get(tpl, {"listings": 0}), "products": 0,
+                    "pages": max(learned.get(tpl, {}).get("pages", 0), crawl.DEAD_AFTER_PAGES)}
+    settings.learned_templates = learned
+    db.execute(update(DiscoveryUrl).where(
+        DiscoveryUrl.competitor_id == competitor.id, DiscoveryUrl.template == tpl[:600],
+        DiscoveryUrl.kind == "product").values(kind="info"))
+
+
+def clean_catalog(db: Session, competitor: Competitor, settings: DiscoverySettings) -> dict[str, Any]:
+    """Wrong products in a competitor's catalogue: duplicates of one product (same ISBN/EAN) and pages that
+    repeat one title and price on several addresses of one page type (a "how to order" page shown for every
+    product). Decisions made by a person are kept. Does not commit."""
+    duplicates = _dedupe(db, competitor.id)
+    groups: dict[tuple[str, str, Decimal | None], list[CatalogItem]] = {}
+    for item in db.scalars(select(CatalogItem).where(
+            CatalogItem.competitor_id == competitor.id, CatalogItem.status == "active",
+            CatalogItem.fetch_status == "ok", CatalogItem.price_from_listing.is_(False),
+            CatalogItem.title.is_not(None), CatalogItem.match_method.is_distinct_from("manual"))):
+        groups.setdefault((template(item.url), plain(item.title), item.price), []).append(item)
+    boilerplate, templates = 0, []
+    for (tpl, _, _), items in groups.items():
+        if len(items) < BOILERPLATE_PAGES:
+            continue
+        for item in items:
+            _not_product(item, f"Nie je produkt: rovnaký názov a cena na {len(items)} stránkach tohto typu "
+                               "(napr. návod na objednávanie).")
+            boilerplate += 1
+        _forget_template(db, competitor, settings, tpl)
+        templates.append(tpl)
+    return {"duplicates": duplicates, "boilerplate": boilerplate, "templates": templates}
+
+
+def clean_all(db: Session) -> dict[str, int]:
+    """Worker housekeeping: clean the catalogues of all competitors (also paused ones). Commits."""
+    total = {"duplicates": 0, "boilerplate": 0}
+    for competitor in db.scalars(select(Competitor).where(Competitor.status != "archived")):
+        if competitor.scrape_config is None:
+            continue
+        settings = load(competitor.scrape_config)
+        result = clean_catalog(db, competitor, settings)
+        if result["templates"]:
+            save(competitor.scrape_config, settings)
+        for key in total:
+            total[key] += result[key]
+    db.commit()
+    return total
