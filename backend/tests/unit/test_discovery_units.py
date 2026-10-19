@@ -107,7 +107,26 @@ def test_grade_from_the_number_after_the_subject_or_the_pupils():
     cases = {"Barevná čeština 1": {"1"}, "Barevná čeština pro prvňáčky, pracovní sešit": {"1"},
              "Barevná čeština pro třeťáky": {"3"}, "Prvouka 2 pro ZŠ, pracovní sešit": {"2"},
              "Matematika 1 – 3. díl": {"1"}, "Český jazyk 9, 1. díl: Učivo o jazyce": {"9"},
-             "Přírodopis 6 – Rostliny": {"6"}, "Hudební výchova pro 2. stupeň ZŠ": set(),
+             "Přírodopis 6 – Rostliny": {"6"}, "Hudební výchova pro 2. stupeň ZŠ": set("6789"),
              "Angličtina 2 díl": set(), "Matematika pro 3. ročník": {"3"}}
     for title, grades in cases.items():
         assert _grades(plain(title)) == grades, title
+
+
+def test_school_words_are_whole_words_and_ordinals_count():
+    from app.services.comparable import _grades, plain
+
+    assert _grades(plain("v souladu s RVP, doložka MŠMT, soubor úloh")) == set()
+    assert _grades(plain("Chemie pro SŠ")) == {"SS"} and _grades(plain("Brzy půjdu do školy, předškoláci")) == {"MS"}
+    assert _grades(plain("Pracovní sešit k učebnici čtení pro první ročník")) == {"1"}
+    assert _grades(plain("ideální pro první stupeň")) == set("12345")
+
+
+def test_description_from_structured_data_or_meta_but_not_the_title():
+    from app.scraping.describe import description_of
+
+    ld = ('<script type="application/ld+json">{"@type": "Product", "name": "X", '
+          '"description": "<p>Pro 3. ročník ZŠ</p>"}</script>')
+    assert description_of(ld, "https://shop.example.cz/x") == "Pro 3. ročník ZŠ"
+    meta = '<meta name="description" content="Grafomotorika">'
+    assert description_of(meta, "https://shop.example.cz/x", "Grafomotorika") is None

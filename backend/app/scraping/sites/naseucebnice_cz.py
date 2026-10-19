@@ -89,3 +89,17 @@ def read(text: str, page_url: str):
         query.update(limit=str(LIMIT), offset=str(offset + len(rows)))
         next_urls.append(urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), "")))
     return PageResult(items=items, next_urls=next_urls)
+
+
+def description(html: str) -> str | None:
+    """The text under "Popis produktu" of a product page (its meta description only repeats the title)."""
+    from bs4 import BeautifulSoup
+
+    text = " ".join(BeautifulSoup(html, "html.parser").get_text(" ").split())
+    start = text.rfind("Popis produktu")
+    if start < 0:
+        return None
+    body = text[start:].split("Všechny varianty produktu", 1)[-1]
+    for end in ("Parametry Počet stran", "Parametry ISBN", "Související produkty"):
+        body = body.split(end, 1)[0]
+    return body.strip() or None

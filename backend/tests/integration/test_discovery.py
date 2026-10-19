@@ -894,3 +894,35 @@ def test_one_priced_page_is_not_enough_to_track_automatically(db):
         assert run.stats["quality_ok"] is False and "iba 1 produktov" in run.stats["quality_note"]
         request_again(db, c)
     assert settings_of(db, c).mode == "shadow"
+
+
+def test_grade_from_the_description_of_a_listed_product_is_read_once(db):
+    from app.scraping.sites import naseucebnice_cz
+
+    c = competitor(db, "SPN", "https://www.spn.cz/", "spn.cz")
+    product(db, "Grafomotorika pro prvňáčky", "60", attributes={"grade": "1. ročník", "subject": "Čeština",
+                                                                 "type": "Pracovní sešit"})
+    books = [spn_book(n, 9900) for n in range(8)]
+    grafo = {**spn_book(50, 6900), "name": "Grafomotorika, pracovní sešit", "page_path": "grafomotorika"}
+    start = naseucebnice_cz.start_urls()[0].removeprefix(naseucebnice_cz.SHOP)
+    page = ("<h1>Grafomotorika</h1><p>1. stupeň ZŠ</p><div>Popis produktu Parametry Všechny varianty produktu "
+            "Cvičebnice grafomotoriky pro první ročník, nácvik psaní. Parametry ISBN 978-80-7235-696-6</div>")
+    site = FakeSite({"/robots.txt": (200, "User-agent: *\n"),
+                     start: (200, naseucebnice_page(books + [grafo], 0, 9)), "/grafomotorika": (200, page)})
+    run_all(db, site)
+    assert site.requests.count("/grafomotorika") == 1  # the only product without a grade in title or address
+    item = db.scalar(select(CatalogItem).where(CatalogItem.key == "naseucebnice:grafomotorika"))
+    assert item.hints["description_checked"] and "první ročník" in item.hints["description"]
+    assert item.attributes["grades"] == ["1"] and item.price == Decimal("69.00")  # the listing's price stays
+    assert item.match_status in ("matched", "review")
+    request_again(db, c)
+    run_all(db, site)
+    assert site.requests.count("/grafomotorika") == 1  # not read again
+
+
+def test_a_description_shared_by_the_whole_website_is_not_the_products():
+    from app.services.comparable import profile_of_item
+
+    shared = "Učebnice pro 1. stupeň ZŠ od roku 1990"
+    assert profile_of_item("Grafomotorika", {"description": shared}).grades == frozenset("12345")
+    assert profile_of_item("Grafomotorika", {}).grades == frozenset()  # what _match passes for a shared text

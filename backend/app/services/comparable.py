@@ -13,6 +13,7 @@ Levels (docs/AUTO_DISCOVERY_PLAN.md, part D):
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -28,7 +29,7 @@ SUBJECTS = {
     "cestina": ("cestin", "cesky jazyk", "ceskeho jazyk", "ceskemu jazyk", "ceskym jazyk", "citan", "cteni",
                 "ctenar", "slabik", "abeced", "pismen", "pravopis", "sloh", "literatur", "literarni", "vyjmenovan",
                 "slovensky jazyk", "slovencin", "pisank", "psani", "mluvnic", "jazykova vychova", "komunikacni",
-                "diktat"),
+                "diktat", "grafomotor"),
     "matematika": ("matemati", "pocitan", "pocitame", "pocetnik", "aritmeti", "geometri", "priklad", "cisla",
                    "nasobil", "zlomk"),
     "prvouka": ("prvouk", "clovek a jeho svet", "prvoucky"),
@@ -70,6 +71,10 @@ _PART = re.compile(r"(\d)\s*\.\s*dil|dil\s*(\d)")
 _PUPILS = {"prvnack": "1", "prvnak": "1", "druhak": "2", "tretak": "3", "ctvrtak": "4", "patak": "5",
            "sestak": "6", "sedmak": "7", "osmak": "8", "devatak": "9"}
 _PUPIL = re.compile(r"\b(" + "|".join(_PUPILS) + ")")
+# Ordinals in words: "pro první ročník", "učebnice pro třetí třídu", "ideální pro první stupeň".
+_ORDINALS = {"prvni": "1", "druh": "2", "treti": "3", "ctvrt": "4", "pat": "5", "sest": "6", "sedm": "7",
+             "osm": "8", "devat": "9"}
+_ORDINAL = re.compile(r"\b(prvni|druh|treti|ctvrt|pat|sest|sedm|osm|devat)[a-z]*\s+(rocnik|trid|stup)")
 
 
 def plain(text: str | None) -> str:
@@ -94,9 +99,9 @@ class Profile:
 
 def _subject_number() -> re.Pattern:
     """A grade as a number right after the subject: "Barevná čeština 1", "Prvouka 2 pro ZŠ", "Přírodopis 6",
-    "Český jazyk 9, 1. díl" (not a part "3. díl", a level "2. stupeň" or a range "1-5")."""
+    "Český jazyk 9, 1. díl", "Hudební výchova 6 pro ZŠ" (not a part "3. díl", a level "2. stupeň" or a range "1-5")."""
     stems = sorted({re.escape(w) for words in SUBJECTS.values() for w in words}, key=len, reverse=True)
-    return re.compile(r"\b(?:" + "|".join(stems) + r")[a-z]*\s+([1-9])(?![\d.]|-\d)"
+    return re.compile(r"\b(?:" + "|".join(stems) + r")[a-z]*(?:\s+[a-z]{3,})?\s+([1-9])(?![\d.]|-\d)"
                       r"(?!\s*(?:dil|stupen|cast|svazek|pololet))")
 
 
@@ -104,17 +109,32 @@ def _grades(text: str) -> frozenset[str]:
     found: set[str] = set()
     found.update(_SUBJECT_NUMBER.findall(text))
     found.update(_PUPILS[m] for m in _PUPIL.findall(text))
-    for first, last in _GRADE.findall(text):
+    for first, last in _GRADE.findall(text) + _GRADES_SHORT.findall(text):
         end = int(last) if last else int(first)
         found.update(str(g) for g in range(int(first), max(int(first), end) + 1))
-    if re.search(r"\b(ms|materska|predskol)", text):
+    for stage in _STAGE.findall(text):  # "pro 2. stupeň ZŠ": grades of the stage
+        found.update(STAGE_GRADES[stage])
+    for word, kind in _ORDINAL.findall(text):
+        found.update(STAGE_GRADES.get(_ORDINALS[word], ()) if kind == "stup" else (_ORDINALS[word],))
+    if re.search(r"\bms\b|\b(materska|materske skol|predskol)", text):
         found.add("MS")
-    if re.search(r"\b(ss|stredni skol|gymnazi|sou|sos|maturit)", text):
+    if re.search(r"\b(ss|sou|sos)\b|\b(stredni skol|gymnazi|maturit)", text):
         found.add("SS")
     return frozenset(found)
 
 
 _SUBJECT_NUMBER = _subject_number()
+_GRADES_SHORT = re.compile(r"(\d)\s*\.\s*a\s*(\d)\s*\.\s*r\b")  # "Čítanka pro 1. a 2. r."
+_STAGE = re.compile(r"\b([12])\s*\.?\s*(?:stupen|stupni|st\b)")
+STAGE_GRADES = {"1": tuple("12345"), "2": tuple("6789")}
+TYPE_GRADES = {"slabikar": frozenset({"1"})}  # a primer is for the 1st grade, whatever the title says
+
+
+def _url_text(url: str | None) -> str:
+    """Words of a product address: ".../hudebni-vychova-pro-1-rocnik-zs" -> " hudebni vychova pro 1 rocnik zs ",
+    "cvicebnice-z-cj-pro-1-5-rocnik" keeps the range 1-5."""
+    path = urlsplit(url or "").path
+    return plain(re.sub(r"(?<!\d)-|-(?!\d)", " ", path.replace("/", " ")))
 
 
 def _subjects(text: str) -> frozenset[str]:
@@ -135,11 +155,15 @@ def _parts(text: str) -> frozenset[str]:
     return frozenset(parts)
 
 
-def profile_of_item(title: str | None, hints: dict | None) -> Profile:
+def profile_of_item(title: str | None, hints: dict | None, url: str | None = None) -> Profile:
+    """Grade from the shop's grade, else the title (and category), the address, the type (a primer) and
+    last the product description (read from the product page)."""
     hints = hints or {}
     text = plain(" ".join(filter(None, [title, hints.get("grade"), hints.get("category")])))
-    grades = _grades(plain(hints.get("grade"))) or _grades(text)
-    return Profile(grades=grades, subjects=_subjects(plain(title)) or _subjects(text), type=_type(plain(title)),
+    kind = _type(plain(title))
+    grades = (_grades(plain(hints.get("grade"))) or _grades(text) or _grades(_url_text(url))
+              or TYPE_GRADES.get(kind or "", frozenset()) or _grades(plain(hints.get("description"))))
+    return Profile(grades=grades, subjects=_subjects(plain(title)) or _subjects(text), type=kind,
                    parts=_parts(text), bundle=bool(BUNDLE.search(title or "")))
 
 
@@ -177,8 +201,9 @@ class OwnCatalogue:
             for code in gtin_keys(p.isbn, p.ean):
                 self.by_gtin.setdefault(code, []).append(p)
 
-    def decide(self, title: str | None, hints: dict | None, identifiers: dict | None) -> tuple[Decision, Profile]:
-        item = profile_of_item(title, hints)
+    def decide(self, title: str | None, hints: dict | None, identifiers: dict | None,
+               url: str | None = None) -> tuple[Decision, Profile]:
+        item = profile_of_item(title, hints, url)
         codes = gtin_keys((identifiers or {}).get("isbn"), (identifiers or {}).get("ean") or
                           (identifiers or {}).get("gtin"))
         by_code = {p.id: p for code in codes for p in self.by_gtin.get(code, [])}

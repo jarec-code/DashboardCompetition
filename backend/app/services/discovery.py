@@ -22,6 +22,7 @@ marked as gone and the run stops with a warning.
 import logging
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -44,14 +45,14 @@ from app.models import (
     ScrapeConfig,
     ScrapeRun,
 )
-from app.scraping import catalog, crawl
+from app.scraping import catalog, crawl, describe
 from app.scraping.discover import discover_links, query_says_product, skipped_query
 from app.scraping.fetcher import Fetcher, FetchError
 from app.scraping.parsers.base import Extracted, PageContext, ParseError
 from app.scraping.parsers.registry import get_parser
 from app.scraping.urlnorm import safe_canonical, template
 from app.services import alerts, pricing, scheduling
-from app.services.comparable import OwnCatalogue, plain
+from app.services.comparable import OwnCatalogue, plain, profile_of_item
 from app.services.urls import InvalidUrl, normalize_url
 
 log = logging.getLogger("discovery")
@@ -69,6 +70,8 @@ BOILERPLATE_PAGES = 3            # the same title and price on this many pages o
 BOILERPLATE_NOTE = "Nie je produkt: rovnaký názov a cena na"
 FORBIDDEN_TO_STOP = 3            # HTTP 403 on this many different pages in a row: the website blocks us
 ENRICH_WINDOW = 500              # items considered when choosing the next product page to read
+DESCRIBE_PER_RUN = 50            # product pages read only for the description (grade unknown otherwise)
+SHARED_DESCRIPTION = 3           # the same description on this many products: the website's, not the product's
 EARLY_SAMPLE = 15                # pages of a sitemap read before it is judged (no product: next method)
 # When the result of a method is sufficient (docs/SCRAPING_ROBUSTNESS_PLAN.md, part 6)
 MIN_PRICED = 0.8
@@ -503,6 +506,9 @@ class Runner:
                        pause=True)
         if self.run.phase == "enrich" and exc.status in (403, 404, 410):
             item = self._next_to_enrich()
+            if item is not None and item.price_from_listing:
+                self._described(item)  # no description; the product itself is fine
+                return
             if item is not None:
                 self._enriched(item, error=f"{exc} ({url})", status="failed")
                 self._count_template(url)
@@ -981,7 +987,7 @@ class Runner:
                 CatalogItem.price_from_listing.is_(False), CatalogItem.enriched_at.is_(None),
                 CatalogItem.match_status == "new").order_by(CatalogItem.id).limit(ENRICH_WINDOW)))
             if not batch:
-                return None
+                return self._next_to_describe()
             tabs = self.run.stats.get("tabs") or []  # tabs of product pages found in the sitemap
             dead = [i for i in batch
                     if crawl.dead(template(i.url), stats) or catalog.is_tab(urlsplit(i.url).path, tabs)]
@@ -1012,9 +1018,33 @@ class Runner:
             skipped += 1
         self._stat("skipped_urls", skipped)
 
+    def _next_to_describe(self) -> CatalogItem | None:
+        """A product priced from the listing whose grade is told neither by the shop, the title nor the address
+        (SPN: "Grafomotorika", "Učíme se číst"): its page is read once, only for the description."""
+        if self.run.kind != "discovery" or self.run.stats.get("described", 0) >= DESCRIBE_PER_RUN:
+            return None
+        for item in self.db.scalars(select(CatalogItem).where(
+                CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
+                CatalogItem.price_from_listing.is_(True), CatalogItem.enrich_error.is_(None),
+                CatalogItem.match_method.is_distinct_from("manual")).order_by(CatalogItem.id)):
+            hints = item.hints or {}
+            if urlsplit(item.url).fragment:
+                continue  # no page of its own (alter.cz: "/shop#polozka-84")
+            if not hints.get("description_checked") and not profile_of_item(item.title, hints, item.url).grades:
+                return item
+        return None
+
+    def _described(self, item: CatalogItem, text: str | None = None) -> None:
+        item.hints = {**(item.hints or {}), "description_checked": True,
+                      **({"description": text} if text else {})}
+        self._stat("described")
+
     def _enrich(self, url: str) -> None:
         item = self._next_to_enrich()
         response = self._fetch(url)
+        if item.price_from_listing:  # read only for the description; the price stays the listing's
+            self._described(item, describe.description_of(response.text or "", response.url, item.title))
+            return
         data, error = self._parse_product(response.text or "", response.url)
         self._count_template(url, product=data is not None)
         current = self.run.stats.get("current") or "?"
@@ -1059,6 +1089,9 @@ class Runner:
         canonical = _canonical_link(html, item.url)
         if canonical:
             item.canonical_url = canonical
+        text = describe.description_of(html, item.url, data.title)
+        if text:
+            item.hints = {**(item.hints or {}), "description": text}
         item.completeness = completeness(item)
 
     def _enriched(self, item: CatalogItem, error: str | None = None, status: str | None = None) -> None:
@@ -1102,10 +1135,11 @@ class Runner:
         own = OwnCatalogue(self.db)
         existing = self._existing_offers()
         counts = {"matched": 0, "review": 0, "unrelated": 0}
-        items = self.db.scalars(select(CatalogItem).where(
+        items = list(self.db.scalars(select(CatalogItem).where(
             CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
             CatalogItem.match_status.in_(("new", "review", "unrelated", "matched")),
-            CatalogItem.enrich_error.is_(None)))
+            CatalogItem.enrich_error.is_(None))))
+        shared = Counter((i.hints or {}).get("description") for i in items)  # the website's text, not the product's
         for item in items:
             if item.match_method in ("manual", "existing") or (item.match_status == "matched" and item.offer_id):
                 continue
@@ -1117,7 +1151,10 @@ class Runner:
                 item.match_status, item.match_method = "matched", "existing"
                 counts["matched"] += 1
                 continue
-            decision, profile = own.decide(item.title, item.hints, item.identifiers)
+            hints = item.hints or {}
+            if shared[hints.get("description")] >= SHARED_DESCRIPTION:
+                hints = {k: v for k, v in hints.items() if k != "description"}
+            decision, profile = own.decide(item.title, hints, item.identifiers, item.url)
             item.attributes = {**profile.as_dict(), "note": decision.note}
             item.candidates = decision.candidates
             item.match_status, item.match_method = decision.status, decision.method
