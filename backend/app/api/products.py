@@ -8,7 +8,7 @@ from app.api.deps import AdminUser, CurrentUser, DbSession
 from app.models import CompetitorProduct, Product, ProductPrice
 from app.schemas.common import Page
 from app.schemas.products import ImportResult, ProductCreate, ProductOut, ProductUpdate
-from app.services import matching, scheduling
+from app.services import alerts, matching, scheduling
 from app.services.identifiers import normalize_ean, normalize_isbn, normalize_sku
 from app.services.product_import import MAX_BYTES, ProductImportError, import_products_csv
 
@@ -155,6 +155,10 @@ def update_product(product_id: int, data: ProductUpdate, db: DbSession, _admin: 
     if "priority" in changes:
         scheduling.reschedule(db, db.scalars(select(CompetitorProduct).where(
             CompetitorProduct.product_id == product.id)))
+    if data.prices is not None:  # "competitor is cheaper" depends on our price
+        db.flush()
+        for offer in db.scalars(select(CompetitorProduct).where(CompetitorProduct.product_id == product.id)):
+            alerts.evaluate_offer(db, offer)
     db.commit()
     return get_product(product_id, db, _admin)
 

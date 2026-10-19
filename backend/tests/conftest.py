@@ -19,11 +19,18 @@ from app.security import hash_password, login_limiter  # noqa: E402
 PASSWORD = "spravne-heslo-123"
 
 
+def truncate_all() -> None:
+    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
+    with engine.begin() as conn:
+        conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def database():
     with engine.begin() as conn:
         conn.execute(text("DROP SCHEMA public CASCADE; CREATE SCHEMA public"))
     migrate()
+    truncate_all()  # migrations seed data (default alert rules); every test starts from empty tables
     yield
     engine.dispose()
 
@@ -31,9 +38,7 @@ def database():
 @pytest.fixture(autouse=True)
 def clean_tables():
     yield
-    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
-    with engine.begin() as conn:
-        conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+    truncate_all()
     login_limiter._failures.clear()
 
 

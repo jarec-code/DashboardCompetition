@@ -6,8 +6,9 @@ import { formatDateTime, formatMoney } from "../../format";
 import { AVAILABILITY_LABELS } from "../products/labels";
 
 const CHANGE = {
-  initial: { label: "prvý záznam", color: "gray" }, price_up: { label: "cena ↑", color: "red" },
-  price_down: { label: "cena ↓", color: "green" }, currency: { label: "mena", color: "blue" },
+  // From our point of view: a competitor getting cheaper is the threat (red), as in the comparison.
+  initial: { label: "prvý záznam", color: "gray" }, price_up: { label: "cena ↑", color: "green" },
+  price_down: { label: "cena ↓", color: "red" }, currency: { label: "mena", color: "blue" },
   availability: { label: "dostupnosť", color: "orange" }, original_price: { label: "pôvodná cena", color: "grape" },
 } as Record<string, { label: string; color: string }>;
 

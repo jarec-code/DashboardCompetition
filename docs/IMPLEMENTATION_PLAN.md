@@ -431,7 +431,16 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
-### Etapa 7: Cenová história s grafmi a upozornenia
+### Etapa 7: Cenová história s grafmi a upozornenia ✅ kód hotový 19. 10. 2026
+
+**Stav:**
+- **Vytvorené:** API `/history/chart` (jeden produkt na jednom trhu; hodnota spred obdobia prenesená na jeho začiatok, posledná cena predĺžená do „teraz“; stabilný farebný slot podľa konkurenta; séria v inej mene sa do grafu nezaradí – nikdy dve meny na jednej osi), `/history/changes` (vyhľadávanie podľa produktu, konkurenta, času a druhu zmeny; predchádzajúca cena cez `LAG`), migrácia `0004` (`alert_rules`, `alerts`, predvolené pravidlá), `services/alerts.py` (pravidlá: pokles ceny o viac ako X %, konkurent lacnejší o viac ako X %, nedostupnosť, neaktualizovaná cena, opakované zlyhanie N×; udalostné pravidlo vyrieši používateľ, stavové sa vyriešia samy; najviac jedno aktívne upozornenie na pravidlo a ponuku; rozsah pravidla podľa konkurenta alebo produktu), vyhodnotenie po každej kontrole, po zmene vlastnej ceny, priradenia alebo archivácii a každých 5 minút, API `/alerts`, `/alerts/count`, `/alert-rules`.
+- **UI:** Cenová história (výber produktu, trhu, obdobia a konkurentov; graf podľa data-viz zásad: validovaná kategoriálna paleta s vlastnými tmavými odtieňmi, schodové 2px čiary, body pri zmenách, vlastná cena ako prerušovaná porovnávacia čiara, jedna os, tooltip so všetkými sériami, legenda a priame popisky pre ≤ 4 série, prepnutie na tabuľku; tabuľka zmien), Upozornenia (zvonček s počtom v hlavičke, stavy otvorené / potvrdené / vyriešené), pravidlá upozornení v Nastaveniach, panel otvorených upozornení na Dashboarde, odkaz na históriu z detailu produktu.
+- **Opravy počas etapy:** odkaz s parametrami (napr. `/historia?product=5`) si po prihlásení zachová parametre; farby zmien zjednotené – zlacnenie u konkurenta je pre nás hrozba (červená) všade.
+- **Testy (skutočný výstup):** backend 202 passed (10 nových: každé pravidlo, deduplikácia, rozsah, vypnutie, archivácia, stavy a oprávnenia, worker, dáta grafu, tabuľka zmien), Vitest 4 passed, Playwright e2e 26 passed (4 nové: graf a tabuľka, upozornenia vrátane automatického vyriešenia po zmene vlastnej ceny, pravidlá v nastaveniach). Graf skontrolovaný na snímkach v svetlom aj tmavom režime.
+- **Obmedzenie:** vlastné ceny sa v histórii neuchovávajú (porovnávacia čiara je aktuálna vlastná cena). Ak bude treba, pribudne história vlastných cien.
+
+### Etapa 7: Cenová história s grafmi a upozornenia (pôvodný rozsah)
 
 **Rozsah:**
 - Stránka Cenová história: výber produktu, obdobia a konkurentov; graf (Recharts, schodový priebeh, keďže cena platí do ďalšej zmeny) s vlastnou cenou ako porovnávacou líniou a vyznačenými zmenami; tabuľka zmien s filtrom podľa produktu, konkurenta a času.

@@ -5,10 +5,12 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { useSession } from "./auth/auth";
 import { AppLayout } from "./layout/AppLayout";
 import { NAV_ITEMS } from "./layout/navigation";
+import { AlertsPage } from "./pages/alerts/AlertsPage";
 import { ComparisonPage } from "./pages/comparison/ComparisonPage";
 import { CompetitorDetailPage } from "./pages/competitors/CompetitorDetailPage";
 import { CompetitorsPage } from "./pages/competitors/CompetitorsPage";
 import { DashboardPage } from "./pages/dashboard/DashboardPage";
+import { HistoryPage } from "./pages/history/HistoryPage";
 import { LoginPage } from "./pages/LoginPage";
 import { PlaceholderPage } from "./pages/PlaceholderPage";
 import { ProductDetailPage } from "./pages/products/ProductDetailPage";
@@ -19,6 +21,7 @@ import { UpdatesPage } from "./pages/updates/UpdatesPage";
 const IMPLEMENTED: Record<string, ReactNode> = {
   "/": <DashboardPage />,
   "/porovnanie": <ComparisonPage />,
+  "/historia": <HistoryPage />,
   "/konkurencia": <CompetitorsPage />,
   "/produkty": <ProductsPage />,
   "/aktualizacie": <UpdatesPage />,
@@ -40,7 +43,7 @@ export function App() {
     return (
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname }} />} />
+        <Route path="*" element={<Navigate to="/login" replace state={{ from: location.pathname + location.search }} />} />
       </Routes>
     );
   }
@@ -48,7 +51,7 @@ export function App() {
   const from = (location.state as { from?: string } | null)?.from;
   return (
     <Routes>
-      <Route path="/login" element={<Navigate to={from && from !== "/login" ? from : "/"} replace />} />
+      <Route path="/login" element={<Navigate to={from && !from.startsWith("/login") ? from : "/"} replace />} />
       <Route element={<AppLayout />}>
         {NAV_ITEMS.map((item) => (
           <Route key={item.path} path={item.path}
@@ -56,6 +59,7 @@ export function App() {
         ))}
         <Route path="/konkurencia/:id" element={<CompetitorDetailPage />} />
         <Route path="/produkty/:id" element={<ProductDetailPage />} />
+        <Route path="/upozornenia" element={<AlertsPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

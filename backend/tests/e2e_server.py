@@ -9,6 +9,7 @@ alter.cz pages from tests/fixtures/html/alter_cz, and GET /__set_price?id=1111&v
 the price it serves, so a test can observe a price change.
 """
 import os
+import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -64,8 +65,8 @@ class FakeShop(BaseHTTPRequestHandler):
             if page.is_file():
                 html = page.read_text(encoding="utf-8")
                 if product_id in PRICE_OVERRIDES:  # the first price block holds the printed variant's price
-                    html = html.replace('<div class="vatPricePD">44,00',
-                                        f'<div class="vatPricePD">{PRICE_OVERRIDES[product_id]}', 1)
+                    html = re.sub(r'<div class="vatPricePD">[\d\s,.]+',
+                                  f'<div class="vatPricePD">{PRICE_OVERRIDES[product_id]}', html, count=1)
                 return self._send(200, html)
         return self._send(404, "<h1>Stránka nebyla nalezena</h1>")
 

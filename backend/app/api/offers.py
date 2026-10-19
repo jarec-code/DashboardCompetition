@@ -20,7 +20,7 @@ from app.schemas.offers import (
     OfferUpdate,
     ProductRef,
 )
-from app.services import matching, scheduling
+from app.services import alerts, matching, scheduling
 from app.services.urls import InvalidUrl as InvalidUrlError
 from app.services.urls import normalize_url
 
@@ -172,6 +172,8 @@ def update_offer(offer_id: int, data: OfferUpdate, db: DbSession, _admin: AdminU
         setattr(offer, field, value)
     if "custom_frequency_hours" in changes:
         scheduling.reschedule(db, [offer])
+    db.flush()
+    alerts.evaluate_offer(db, offer)  # archiving resolves its alerts
     db.commit()
     return _offer_out(db, offer_id)
 
@@ -188,6 +190,8 @@ def set_assignment(offer_id: int, data: AssignmentIn, db: DbSession, _admin: Adm
         matching.ignore(offer)
     else:
         matching.reset_to_auto(db, offer)
+    db.flush()
+    alerts.evaluate_offer(db, offer)  # the assigned product decides "cheaper than us"
     db.commit()
     return _offer_out(db, offer_id)
 

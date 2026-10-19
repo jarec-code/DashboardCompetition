@@ -3,7 +3,7 @@ import {
 } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
-import { IconEdit, IconTrash } from "@tabler/icons-react";
+import { IconChartLine, IconEdit, IconTrash } from "@tabler/icons-react";
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
@@ -69,12 +69,14 @@ export function ProductDetailPage() {
           <Badge variant="light" color={PRIORITY_LABELS[product.priority].color}>{PRIORITY_LABELS[product.priority].label}</Badge>
           {product.tracking_status === "paused" && <Badge variant="light" color="yellow">sledovanie pozastavené</Badge>}
         </Group>
-        {isAdmin && (
-          <Group gap="xs">
+        <Group gap="xs">
+          <Button component={Link} to={`/historia?product=${product.id}`} variant="default"
+                  leftSection={<IconChartLine size={16} />}>Cenová história</Button>
+          {isAdmin && (<>
             <Button variant="subtle" color="red" leftSection={<IconTrash size={16} />} onClick={confirm.open}>Zmazať</Button>
             <Button leftSection={<IconEdit size={16} />} onClick={edit.open}>Upraviť</Button>
-          </Group>
-        )}
+          </>)}
+        </Group>
       </Group>
 
       <Paper withBorder p="md" radius="md">

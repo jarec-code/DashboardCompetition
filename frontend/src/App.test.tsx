@@ -99,3 +99,18 @@ describe("App", () => {
     expect(await screen.findByRole("button", { name: "Prihlásiť sa" })).toBeInTheDocument();
   });
 });
+
+describe("deep links", () => {
+  it("keeps the query string of the requested page through the login", async () => {
+    let loggedIn = false;
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (url === "/api/auth/login") { loggedIn = true; return json(200, SESSION); }
+      return loggedIn ? appData(url) : json(401, { detail: "Nie ste prihlásený." });
+    }));
+    renderApp("/nastavenia?tab=x");
+    await userEvent.type(await screen.findByLabelText(/E-mail/), "admin@example.com");
+    await userEvent.type(screen.getByLabelText(/Heslo/), "spravne-heslo-123");
+    await userEvent.click(screen.getByRole("button", { name: "Prihlásiť sa" }));
+    expect(await screen.findByRole("heading", { name: "Nastavenia" })).toBeInTheDocument();
+  });
+});

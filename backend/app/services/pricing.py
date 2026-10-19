@@ -8,6 +8,7 @@ Rules (docs/IMPLEMENTATION_PLAN.md, section 3.1):
 """
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -22,6 +23,7 @@ from app.services import scheduling
 class Outcome:
     changed: bool
     change_types: list[str]
+    previous_price: Decimal | None = None
 
 
 def _locked_current(db: Session, offer_id: int) -> CurrentPrice:
@@ -54,6 +56,7 @@ def record_success(db: Session, offer: CompetitorProduct, data: Extracted, obser
         raise ValueError("record_success needs a price; a missing price is a parse error")
     current = _locked_current(db, offer.id)
     vat_mode = data.vat_mode if data.vat_mode != "unknown" else default_vat_mode
+    previous_price = current.price
     change_types = _changes(current, data)
     if change_types:
         db.add(PriceHistory(competitor_product_id=offer.id, price=data.price, original_price=data.original_price,
@@ -67,7 +70,7 @@ def record_success(db: Session, offer: CompetitorProduct, data: Extracted, obser
     current.is_stale, current.last_error, current.consecutive_failures = False, None, 0
     current.etag, current.last_modified = etag, last_modified
     current.updated_at = observed_at
-    return Outcome(changed=bool(change_types), change_types=change_types)
+    return Outcome(changed=bool(change_types), change_types=change_types, previous_price=previous_price)
 
 
 def record_not_modified(db: Session, offer: CompetitorProduct, observed_at: datetime) -> Outcome:

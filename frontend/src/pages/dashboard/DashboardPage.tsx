@@ -3,9 +3,11 @@ import { IconAlertTriangle, IconArrowDownRight, IconArrowUpRight, IconCircleChec
 import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
 
+import { useAlerts } from "../../api/alerts";
 import { useDashboard, type ChangeItem } from "../../api/comparison";
 import { StatTile } from "../../components/StatTile";
 import { formatDateTime, formatMoney, formatSignedPercent } from "../../format";
+import { AlertWhat } from "../alerts/AlertsPage";
 import { RUN_STATUS_LABELS } from "../competitors/labels";
 
 const CHANGE_LABELS: Record<string, string> = {
@@ -53,6 +55,7 @@ function ChangeRow({ item }: { item: ChangeItem }) {
 
 export function DashboardPage() {
   const { data, isLoading, error } = useDashboard();
+  const alerts = useAlerts({ status: "open", page: 1, page_size: 5 });
   if (isLoading) return <Center p="xl"><Loader /></Center>;
   if (error || !data) return <Alert color="red">{error?.message}</Alert>;
 
@@ -75,6 +78,17 @@ export function DashboardPage() {
                   hint={<Anchor component={Link} to="/porovnanie?position=not_cheapest" size="xs">
                     z {data.comparable_rows} porovnateľných produktov</Anchor>} />
       </SimpleGrid>
+
+      {!!alerts.data?.total && (
+        <Paper withBorder p="md" radius="md">
+          <Group justify="space-between" mb="sm">
+            <Group gap="xs"><IconAlertTriangle size={18} aria-hidden /><Title order={2} size="h5">
+              Otvorené upozornenia ({alerts.data.total})</Title></Group>
+            <Anchor component={Link} to="/upozornenia" size="sm">Všetky upozornenia</Anchor>
+          </Group>
+          <Stack gap="sm">{alerts.data.items.map((a) => <AlertWhat key={a.id} alert={a} />)}</Stack>
+        </Paper>
+      )}
 
       <SimpleGrid cols={{ base: 1, md: 2 }}>
         <Section title="Najväčšie poklesy cien (30 dní)" empty={data.biggest_drops.length === 0}>

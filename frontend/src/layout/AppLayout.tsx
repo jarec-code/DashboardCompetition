@@ -1,8 +1,9 @@
-import { AppShell, Badge, Burger, Button, Group, NavLink, Stack, Text } from "@mantine/core";
+import { ActionIcon, AppShell, Badge, Burger, Button, Group, Indicator, NavLink, Stack, Text, Tooltip } from "@mantine/core";
 import { useDisclosure } from "@mantine/hooks";
-import { IconLogout } from "@tabler/icons-react";
+import { IconBell, IconLogout } from "@tabler/icons-react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 
+import { useAlertCount } from "../api/alerts";
 import { useMonitoring } from "../api/monitoring";
 import { useLogout, useSession } from "../auth/auth";
 import { NAV_ITEMS } from "./navigation";
@@ -15,6 +16,7 @@ export function AppLayout() {
   const logout = useLogout();
   const location = useLocation();
   const monitoring = useMonitoring(60);
+  const openAlerts = useAlertCount().data?.open ?? 0;
   const problems = (monitoring.data?.problem_competitors?.length ?? 0) + (monitoring.data?.problem_offers?.length ?? 0);
 
   return (
@@ -28,6 +30,14 @@ export function AppLayout() {
           </Group>
           {session && (
             <Group gap="sm" wrap="nowrap">
+              <Tooltip label={openAlerts ? `Otvorené upozornenia: ${openAlerts}` : "Upozornenia"} withArrow>
+                <Indicator label={openAlerts} size={16} color="red" disabled={!openAlerts} offset={4}>
+                  <ActionIcon component={Link} to="/upozornenia" variant="subtle" size="lg"
+                              aria-label={openAlerts ? `Upozornenia (${openAlerts} otvorených)` : "Upozornenia"}>
+                    <IconBell size={20} />
+                  </ActionIcon>
+                </Indicator>
+              </Tooltip>
               <Text size="sm" c="dimmed" visibleFrom="xs" truncate maw={220}>{session.user.email}</Text>
               <Badge variant="light" visibleFrom="xs">{ROLE_LABELS[session.user.role]}</Badge>
               <Button variant="subtle" size="compact-sm" leftSection={<IconLogout size={16} />}

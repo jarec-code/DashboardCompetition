@@ -81,7 +81,7 @@ test.describe.serial("Cenové porovnanie a dashboard", () => {
     await login(page, "/");
     await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
     await expect(page.getByText("Sledované ponuky")).toBeVisible();
-    await expect(page.getByText("Konkurent je lacnejší")).toBeVisible();
+    await expect(page.getByText("Konkurent je lacnejší", { exact: true })).toBeVisible();
     await expect(page.getByText("Posledné behy kontrol")).toBeVisible();
     await expect(page.getByRole("link", { name: "Alter (porovnanie)" }).first()).toBeVisible();
     await page.getByRole("link", { name: /z \d+ porovnateľných produktov/ }).click();

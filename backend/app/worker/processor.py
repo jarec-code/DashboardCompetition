@@ -12,7 +12,7 @@ from app.models import Competitor, CompetitorProduct, CurrentPrice, ScrapeJob, S
 from app.scraping.fetcher import Fetcher, FetchError
 from app.scraping.parsers.base import PageContext, ParseError
 from app.scraping.parsers.registry import get_parser
-from app.services import matching, pricing
+from app.services import alerts, matching, pricing
 from app.worker import queue
 
 log = logging.getLogger("worker")
@@ -83,6 +83,8 @@ class Processor:
         will_retry = job.kind == "scheduled" and kind == "temporary" and job.attempt_count <= max_retries
         if offer is not None and job.kind != "test":
             pricing.record_failure(db, offer, competitor, error, now, final=not will_retry)
+            db.flush()
+            alerts.evaluate_offer(db, offer)
         if will_retry:
             delay = min(RETRY_BASE_SECONDS * 2 ** (job.attempt_count - 1), RETRY_MAX_SECONDS)
             delay = max(delay * random.uniform(0.8, 1.2), retry_after or 0)
@@ -136,6 +138,8 @@ class Processor:
 
         if fetched.not_modified:
             pricing.record_not_modified(db, offer, observed_at)
+            db.flush()
+            alerts.evaluate_offer(db, offer)
             return {**result, "not_modified": True, "change_types": []}
 
         data = spec.parse(PageContext(html=fetched.text or "", url=fetched.url, config=config.parser_config,
@@ -149,6 +153,8 @@ class Processor:
                                          etag=fetched.etag, last_modified=fetched.last_modified)
         db.flush()
         matching.auto_match(db, offer)
+        db.flush()
+        alerts.evaluate_offer(db, offer, alerts.Event(outcome.change_types, outcome.previous_price))
         return {**result, "change_types": outcome.change_types}
 
     @staticmethod
