@@ -133,10 +133,17 @@ def parse_opengraph(ctx: PageContext) -> Extracted:
 
 
 def parse_auto(ctx: PageContext) -> Extracted:
+    """Structured data first (JSON-LD, microdata, Open Graph), then the text of the page (heuristic)."""
+    from app.scraping.parsers.heuristic import parse_heuristic
+
     for parser in (parse_jsonld, parse_microdata, parse_opengraph):
         try:
             return parser(ctx)
         except ParseError:
             continue
-    raise ParseError("Stránka neobsahuje štruktúrované dáta s cenou (JSON-LD, microdata ani Open Graph). "
-                     "Nastavte CSS selektory alebo parser pre tento web.")
+    try:
+        return parse_heuristic(ctx)
+    except ParseError as exc:
+        raise ParseError("Stránka neobsahuje štruktúrované dáta s cenou (JSON-LD, microdata ani Open Graph) a cenu "
+                         f"sa nepodarilo nájsť ani v texte ({exc}). Nastavte CSS selektory alebo parser pre tento "
+                         "web.") from None

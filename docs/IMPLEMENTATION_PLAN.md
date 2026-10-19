@@ -533,6 +533,18 @@ Podľa [AUTO_DISCOVERY_PLAN.md](AUTO_DISCOVERY_PLAN.md), body 1–5 schválené.
 
 ---
 
+### Doplnok: Robustné načítavanie – etapy 1 a 2 ✅ 19. 10. 2026
+
+Podľa [SCRAPING_ROBUSTNESS_PLAN.md](SCRAPING_ROBUSTNESS_PLAN.md):
+- úprava a triedenie URL (aj produkty v query), parser z textu stránky, Request-rate z robots.txt, diagnostika
+  (migrácia `0010`),
+- riadený crawler s frontom v DB a limitmi, záloha na crawler namiesto chyby „Zdroj sa nepodarilo nájsť“,
+- testy: backend 372, Vitest 4, e2e 31.
+
+Etapy 3–5 (výber stratégií, recept webu, prehliadač) čakajú.
+
+---
+
 ### Etapa 10 (voliteľná): Playwright pre weby vyžadujúce JavaScript
 
 Iba ak niektorý konkurent neposkytuje dáta v HTML, JSON-LD ani feede.

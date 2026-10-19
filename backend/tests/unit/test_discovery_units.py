@@ -1,0 +1,64 @@
+"""URL normalization, URL templates, product links by query, page text parser, robots.txt Request-rate."""
+from datetime import UTC, datetime
+from decimal import Decimal
+from pathlib import Path
+
+import pytest
+
+from app.scraping.discover import discover_links, query_says_product
+from app.scraping.fetcher import request_rate_interval
+from app.scraping.parsers.base import PageContext, ParseError
+from app.scraping.parsers.heuristic import parse_heuristic
+from app.scraping.urlnorm import canonical, template
+from app.services.discovery import _catalogue_links
+
+PROMETHEUS = Path(__file__).parent.parent / "fixtures" / "html" / "prometheus"
+
+
+def page(name: str) -> str:
+    return (PROMETHEUS / name).read_bytes().decode("cp1250")
+
+
+def test_canonical_and_template():
+    assert canonical("HTTPS://Prometheus-Nakl.cz/index.php?zobraz=detail&tisk=ano&PHPSESSID=x&id_katalog=306#a") == \
+        "https://prometheus-nakl.cz/index.php?id_katalog=306&zobraz=detail"
+    assert canonical("https://x.cz/a?b=2&utm_source=n&a=1&sort=p", {"sort"}) == "https://x.cz/a?a=1&b=2"
+    assert template("https://prometheus-nakl.cz/index.php?zobraz=detail&id_katalog=306") == \
+        "/index.php?id_katalog={N}&zobraz=detail"
+    assert template("https://www.alter.cz/produkt/716") == "/produkt/{N}"
+    assert template("https://www.etaktik.cz/hrava-abeceda/") == "/{S}/"
+    assert template("https://x.cz/hledat?q=Matematika 2") == "/hledat?q={V}"
+
+
+def test_products_addressed_by_query_and_catalogue_behind_an_image():
+    assert query_says_product("zobraz=detail&id_katalog=306") and query_says_product("product_id=5")
+    assert not query_says_product("zobraz=id2&id2=1") and not query_says_product("cast=5")
+    links = discover_links(page("katalog.html"), "https://prometheus-nakl.cz/index.php?zobraz=katalog",
+                           "prometheus-nakl.cz", set())
+    assert len(links) == 22 and all("id_katalog=" in c["url"] for c in links)
+    assert _catalogue_links(page("home.html"), "https://prometheus-nakl.cz/", "prometheus-nakl.cz") == [
+        "https://prometheus-nakl.cz/index.php?zobraz=katalog"]  # the menu is images with alt text
+
+
+def test_heuristic_parser_reads_prices_from_page_text():
+    data = parse_heuristic(PageContext(html=page("detail_306.html"), url="https://prometheus-nakl.cz/", config={}))
+    assert (data.price, data.currency, data.title, data.identifiers) == (
+        Decimal("238.00"), "CZK", "Matematika pro SŠ – Stereometrie – také E-KNIHA", {"isbn": "9788071965237"})
+    two = parse_heuristic(PageContext(html=page("detail_2.html"), url="https://prometheus-nakl.cz/", config={}))
+    assert (two.price, two.title) == (Decimal("69.00"), "Matematika pro 1. ročník základní školy – Svět čísel a "
+                                                        "tvarů, pracovní sešit 1")
+    for listing in ("katalog.html", "id2_1.html", "home.html"):  # many prices, no label: not one product
+        with pytest.raises(ParseError):
+            parse_heuristic(PageContext(html=page(listing), url="https://prometheus-nakl.cz/", config={}))
+    single = "<html><body><h1>Kniha</h1><p>Jen 1 299,- Kč</p></body></html>"
+    assert parse_heuristic(PageContext(html=single, url="https://x.cz/", config={})).price == Decimal("1299")
+
+
+def test_request_rate_from_robots():
+    robots = (PROMETHEUS / "robots.txt").read_text(encoding="cp1250")
+    night, day = datetime(2026, 10, 19, 23, 0, tzinfo=UTC), datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
+    assert request_rate_interval(robots, "CompetitionChecker", night) == pytest.approx(60 / 18)
+    assert request_rate_interval(robots, "CompetitionChecker", day) == 10
+    other_group = "User-agent: Googlebot\nRequest-rate: 1/1s\n\nUser-agent: *\nDisallow: /kosik/\n"
+    assert request_rate_interval(other_group, "CompetitionChecker", day) is None
+    assert request_rate_interval("User-agent: *\nRequest-rate: 1/5\n", "CompetitionChecker", day) == 5

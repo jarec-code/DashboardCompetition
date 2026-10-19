@@ -79,6 +79,7 @@ class Fetcher:
                      "Accept-Language": "cs,sk;q=0.9,en;q=0.5"},
         )
         self._robots: dict[str, tuple[float, urllib.robotparser.RobotFileParser | None]] = {}
+        self._robots_text: dict[str, str] = {}
 
     def close(self) -> None:
         self.client.close()
@@ -131,6 +132,17 @@ class Fetcher:
         self.robots_allowed(url)  # loads (and caches) robots.txt of the origin
         parts = urlsplit(url)
         return self._robots[f"{parts.scheme}://{parts.netloc}"][1]
+
+    def request_interval(self, url: str, now: datetime | None = None) -> float | None:
+        """Seconds between requests demanded by robots.txt Request-rate (e.g. "18/1m 2100-0529", times in UTC)."""
+        self._robots_parser(url)
+        parts = urlsplit(url)
+        text = self._robots_text.get(f"{parts.scheme}://{parts.netloc}") or ""
+        return request_rate_interval(text, self._agent, now or datetime.now(UTC))
+
+    def min_interval(self, url: str) -> float:
+        """The longer of Crawl-delay and Request-rate (0 when robots.txt says nothing)."""
+        return max(self.crawl_delay(url) or 0, self.request_interval(url) or 0)
 
     def crawl_delay(self, url: str) -> float | None:
         """Crawl-delay for our user agent from robots.txt (None when not set)."""
@@ -238,7 +250,45 @@ class Fetcher:
                              exc.status, exc.retry_after) from None
         parser = urllib.robotparser.RobotFileParser()
         parser.parse((result.text or "").splitlines())
+        self._robots_text[origin] = result.text or ""
         return parser
+
+
+_RATE = re.compile(r"^\s*(\d+)\s*/\s*(\d+)\s*([smh]?)\s*(?:(\d{4})\s*-\s*(\d{4}))?", re.I)
+
+
+def request_rate_interval(robots: str, agent: str, now: datetime) -> float | None:
+    """Request-rate of the group for our agent (or "*"): the interval valid at `now` (UTC, the window of the
+    extension is given in GMT), or the strictest one when no window matches. None without Request-rate."""
+    groups: list[tuple[set[str], list[str]]] = []
+    for raw in robots.splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if ":" not in line:
+            continue
+        key, value = (part.strip() for part in line.split(":", 1))
+        key = key.lower()
+        if key == "user-agent":
+            if not groups or groups[-1][1] or groups[-1][1] is None:
+                groups.append((set(), []))
+            groups[-1][0].add(value.lower())
+        elif groups:
+            groups[-1][1].append(value if key == "request-rate" else "")
+    own = [rules for agents, rules in groups if agent.lower() in agents]
+    chosen = own[0] if own else next((rules for agents, rules in groups if "*" in agents), [])
+    intervals: list[tuple[float, str | None, str | None]] = []
+    for value in chosen:
+        match = _RATE.match(value) if value else None
+        if not match or int(match.group(1)) == 0:
+            continue
+        seconds = int(match.group(2)) * {"": 1, "s": 1, "m": 60, "h": 3600}[match.group(3).lower()]
+        intervals.append((seconds / int(match.group(1)), match.group(4), match.group(5)))
+    if not intervals:
+        return None
+    hhmm = now.astimezone(UTC).strftime("%H%M")
+    for interval, start, end in intervals:
+        if start and end and (start <= hhmm <= end if start <= end else hhmm >= start or hhmm <= end):
+            return interval
+    return max(i for i, _, _ in intervals)
 
 
 @dataclass

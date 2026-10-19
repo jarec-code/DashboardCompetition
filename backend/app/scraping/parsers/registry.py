@@ -6,13 +6,15 @@ function and a VERSION, then register it below. Other parsers and the global log
 """
 from typing import Any
 
-from app.scraping.parsers import selectors, structured
+from app.scraping.parsers import heuristic, selectors, structured
 from app.scraping.parsers.base import ParserSpec
 from app.scraping.sites import alter_cz
 
 _PARSERS = [
-    ParserSpec("auto", "Automaticky", "Skúsi JSON-LD, microdata a Open Graph v tomto poradí.", structured.VERSION,
-               structured.parse_auto),
+    ParserSpec("auto", "Automaticky", "Skúsi JSON-LD, microdata a Open Graph v tomto poradí, potom cenu a názov "
+               "z textu stránky.", structured.VERSION + heuristic.VERSION, structured.parse_auto),
+    ParserSpec("heuristic", "Z textu stránky", "Názov z nadpisu, cena pri návestí (napr. „Cena: 238 Kč“), ISBN/EAN "
+               "podľa návestia. Pre weby bez štruktúrovaných dát.", heuristic.VERSION, heuristic.parse_heuristic),
     ParserSpec("jsonld", "JSON-LD", "Štruktúrované dáta schema.org v značke <script type=\"application/ld+json\">.",
                structured.VERSION, structured.parse_jsonld),
     ParserSpec("microdata", "Microdata", "Atribúty itemprop podľa schema.org.", structured.VERSION,

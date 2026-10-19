@@ -1,5 +1,5 @@
 import {
-  Alert, Anchor, Badge, Button, Checkbox, Collapse, Group, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack,
+  Alert, Anchor, Badge, Button, Checkbox, Collapse, Group, List, NumberInput, Paper, SegmentedControl, Select, SimpleGrid, Stack,
   Table, Text, TextInput, Title,
 } from "@mantine/core";
 import { useDebouncedValue } from "@mantine/hooks";
@@ -10,7 +10,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 
 import {
-  useCatalog, useDiscovery, useItemAction, useRunDiscovery, useSaveDiscovery,
+  useCatalog, useDiscovery, useDiscoveryUrls, useItemAction, useRunDiscovery, useSaveDiscovery,
   type CatalogItem, type DiscoveryMode, type DiscoveryRun, type DiscoveryState, type ItemMatch, type SourceType,
 } from "../../api/discovery";
 import { useProducts } from "../../api/products";
@@ -24,10 +24,18 @@ const MODES: { value: DiscoveryMode; label: string }[] = [
 ];
 const SOURCES: Record<SourceType, string> = {
   sitemap: "sitemap", feed: "produktový feed", listing: "stránky so zoznamom produktov", adapter: "zoznam produktov (adaptér webu)",
+  crawl: "prechádzanie webu",
 };
 const RUN_STATUS: Record<DiscoveryRun["status"], { label: string; color: string }> = {
   running: { label: "prebieha", color: "blue" }, succeeded: { label: "dokončený", color: "green" },
   failed: { label: "zlyhal", color: "red" }, stopped: { label: "zastavený", color: "orange" },
+  partial: { label: "čiastočne", color: "yellow" },
+};
+const FETCH: Record<string, string> = {
+  ok: "načítané", no_price: "bez ceny", not_product: "nie je produkt", failed: "chyba", skipped: "preskočené",
+};
+const KINDS: Record<string, string> = {
+  product: "produkty", listing: "zoznamy", category: "kategórie", info: "ostatné", unknown: "nezaradené",
 };
 const TYPES: Record<string, string> = {
   metodika: "metodika", pracovni_ucebnice: "pracovná učebnica", pracovni_sesit: "pracovný zošit",
@@ -44,6 +52,7 @@ const FILTERS: { value: string; label: string; match?: ItemMatch; gone?: boolean
   { value: "unrelated", label: "Nesúvisiace", match: "unrelated" },
   { value: "ignored", label: "Ignorované", match: "ignored" },
   { value: "gone", label: "Zmiznuté", gone: true },
+  { value: "incomplete", label: "Neúplné" },
 ];
 const PAGE_SIZE = 50;
 
@@ -65,6 +74,7 @@ export function DiscoveryTab({ competitorId, readOnly }: { competitorId: number;
     <Stack>
       <SettingsCard competitorId={competitorId} state={state.data} readOnly={readOnly} />
       <Runs runs={state.data.runs} />
+      <Diagnostics competitorId={competitorId} state={state.data} />
       <Items competitorId={competitorId} state={state.data} readOnly={readOnly} />
     </Stack>
   );
@@ -77,7 +87,8 @@ function SettingsCard({ competitorId, state, readOnly }: { competitorId: number;
   const [mode, setMode] = useState<DiscoveryMode>(s.mode);
   const [terms, setTerms] = useState(Boolean(s.terms_confirmed_at));
   const [numbers, setNumbers] = useState({ interval_days: s.interval_days, budget_per_night: s.budget_per_night,
-                                           spacing_seconds: s.spacing_seconds });
+                                           spacing_seconds: s.spacing_seconds, max_pages: s.max_pages,
+                                           max_depth: s.max_depth, max_run_days: s.max_run_days });
   const [manual, setManual] = useState(false);
   const [source, setSource] = useState<{ type: SourceType; url: string; pattern: string }>(
     { type: "listing", url: "", pattern: "" });
@@ -120,6 +131,13 @@ function SettingsCard({ competitorId, state, readOnly }: { competitorId: number;
                          onChange={(v) => setNumbers({ ...numbers, budget_per_night: Number(v) || 120 })} />
             <NumberInput label="Rozostup (s)" min={5} max={300} disabled={readOnly} value={numbers.spacing_seconds}
                          onChange={(v) => setNumbers({ ...numbers, spacing_seconds: Number(v) || 10 })} />
+            <NumberInput label="Stránok na beh" min={10} max={20000} disabled={readOnly} value={numbers.max_pages}
+                         description="pri prechádzaní webu"
+                         onChange={(v) => setNumbers({ ...numbers, max_pages: Number(v) || 400 })} />
+            <NumberInput label="Hĺbka odkazov" min={1} max={10} disabled={readOnly} value={numbers.max_depth}
+                         onChange={(v) => setNumbers({ ...numbers, max_depth: Number(v) || 4 })} />
+            <NumberInput label="Najdlhší beh (dni)" min={1} max={60} disabled={readOnly} value={numbers.max_run_days}
+                         onChange={(v) => setNumbers({ ...numbers, max_run_days: Number(v) || 14 })} />
           </SimpleGrid>
           <div>
             <Text size="sm" fw={500}>Zdroj produktov</Text>
@@ -179,7 +197,8 @@ function Runs({ runs }: { runs: DiscoveryRun[] }) {
         <Table striped verticalSpacing={4}>
           <Table.Thead><Table.Tr>
             <Table.Th>Začiatok</Table.Th><Table.Th>Druh</Table.Th><Table.Th>Stav</Table.Th><Table.Th ta="right">Požiadavky</Table.Th>
-            <Table.Th ta="right">Nájdené</Table.Th><Table.Th ta="right">Nové</Table.Th><Table.Th ta="right">Zmiznuté</Table.Th>
+            <Table.Th ta="right">Stránky</Table.Th><Table.Th ta="right">Nájdené</Table.Th><Table.Th ta="right">S cenou</Table.Th>
+            <Table.Th ta="right">Nové</Table.Th><Table.Th ta="right">Zmiznuté</Table.Th>
             <Table.Th ta="right">Spárované</Table.Th><Table.Th ta="right">Na kontrolu</Table.Th><Table.Th>Poznámka</Table.Th>
           </Table.Tr></Table.Thead>
           <Table.Tbody>
@@ -190,13 +209,17 @@ function Runs({ runs }: { runs: DiscoveryRun[] }) {
                 <Table.Td><Badge variant="light" color={RUN_STATUS[r.status].color} style={{ minWidth: "max-content" }}>
                   {RUN_STATUS[r.status].label}</Badge></Table.Td>
                 <Table.Td ta="right">{r.requests}</Table.Td>
+                <Table.Td ta="right">{stat(r, "pages")}</Table.Td>
                 <Table.Td ta="right">{stat(r, "found")}</Table.Td>
+                <Table.Td ta="right">{stat(r, "priced")}</Table.Td>
                 <Table.Td ta="right">{stat(r, "new")}</Table.Td>
                 <Table.Td ta="right">{stat(r, "gone")}</Table.Td>
                 <Table.Td ta="right">{stat(r, "matched")}</Table.Td>
                 <Table.Td ta="right">{stat(r, "review")}</Table.Td>
-                <Table.Td><Text size="xs" c={r.error ? "red" : "dimmed"}>
-                  {r.error ?? [r.stats.promoted ? "prepnuté do automatiky" : null,
+                <Table.Td><Text size="xs" c={r.error ? "red" : r.status === "partial" ? "orange" : "dimmed"}>
+                  {r.error ?? [...(r.stats.incomplete ?? []),
+                               r.source_type ? `zdroj: ${SOURCES[r.source_type]}` : null,
+                               r.stats.promoted ? "prepnuté do automatiky" : null,
                                typeof r.stats.tracked_new === "number" && r.stats.tracked_new ? `nové sledované: ${r.stats.tracked_new}` : null,
                                typeof r.stats.price_changes === "number" ? `zmeny cien: ${r.stats.price_changes}` : null,
                                r.stats.quality_note as string | null].filter(Boolean).join(" · ")}
@@ -206,6 +229,61 @@ function Runs({ runs }: { runs: DiscoveryRun[] }) {
           </Table.Tbody>
         </Table>
       </Table.ScrollContainer>
+    </Paper>
+  );
+}
+
+/** How products were looked for, what the crawler learned about the website and what it could not process. */
+function Diagnostics({ competitorId, state }: { competitorId: number; state: DiscoveryState }) {
+  const last = state.runs.find((r) => r.kind === "discovery");
+  const crawled = state.settings.source?.type === "crawl" || Boolean(last?.stats.templates);
+  const urls = useDiscoveryUrls(competitorId, crawled);
+  if (!last) return null;
+  const attempts = last.stats.attempts ?? [];
+  const templates = Object.entries(last.stats.templates ?? {});
+  const u = urls.data;
+  if (!attempts.length && !templates.length && !u?.problems.length) return null;
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Title order={3} size="h4" mb="xs">Diagnostika zdroja</Title>
+      <Stack gap="sm">
+        {attempts.length > 0 && (
+          <div>
+            <Text size="sm" fw={500}>Ako sa hľadali produkty (posledný beh)</Text>
+            <List size="xs" spacing={2}>{attempts.map((a, i) => (
+              <List.Item key={i}><b>{a.what}</b>: {a.result}</List.Item>))}</List>
+          </div>
+        )}
+        {u && (
+          <Text size="sm">Známe stránky webu: {Object.entries(u.by_kind).map(([k, n]) => `${KINDS[k] ?? k} ${n}`).join(", ") || "—"}
+            {u.by_status.failed ? ` · zlyhané ${u.by_status.failed}` : ""}{u.by_status.skipped ? ` · preskočené ${u.by_status.skipped}` : ""}
+            {u.by_status.queued ? ` · čakajú ${u.by_status.queued}` : ""}</Text>
+        )}
+        {templates.length > 0 && (
+          <Table.ScrollContainer minWidth={600}>
+            <Table verticalSpacing={2} fz="xs">
+              <Table.Thead><Table.Tr><Table.Th>Typ stránok (šablóna URL)</Table.Th><Table.Th ta="right">Načítané</Table.Th>
+                <Table.Th ta="right">Produkty</Table.Th><Table.Th ta="right">Zoznamy</Table.Th></Table.Tr></Table.Thead>
+              <Table.Tbody>{templates.map(([t, v]) => (
+                <Table.Tr key={t}><Table.Td ff="monospace">{t}</Table.Td><Table.Td ta="right">{v.pages}</Table.Td>
+                  <Table.Td ta="right">{v.products}</Table.Td><Table.Td ta="right">{v.listings}</Table.Td></Table.Tr>
+              ))}</Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
+        )}
+        {u && u.problems.length > 0 && (
+          <div>
+            <Text size="sm" fw={500}>Nespracované časti webu</Text>
+            <List size="xs" spacing={2}>{u.problems.map((p, i) => (
+              <List.Item key={i}><Text span ff="monospace" size="xs">{p.template}</Text> – {p.count}×{" "}
+                {p.status === "failed" ? "zlyhalo" : "preskočené"}{p.reason ? `: ${p.reason}` : ""}
+                {p.examples[0] && <> (napr. <Anchor href={p.examples[0]} target="_blank" rel="noopener noreferrer" size="xs">
+                  {p.examples[0].replace(/^https?:\/\/[^/]+/, "")}</Anchor>)</>}
+              </List.Item>
+            ))}</List>
+          </div>
+        )}
+      </Stack>
     </Paper>
   );
 }
@@ -237,6 +315,7 @@ function Items({ competitorId, state, readOnly }: { competitorId: number; state:
   const [debounced] = useDebouncedValue(search.trim(), 300);
   const current = FILTERS.find((f) => f.value === filter)!;
   const list = useCatalog(competitorId, { match_status: current.match, item_status: current.gone ? "gone" : "active",
+                                          incomplete: filter === "incomplete" || undefined,
                                           q: debounced || undefined, page, page_size: PAGE_SIZE });
   const action = useItemAction();
   const act = (id: number, kind: "assign" | "ignore" | "reset", productId?: number) =>
@@ -255,6 +334,11 @@ function Items({ competitorId, state, readOnly }: { competitorId: number; state:
       <Stack gap={0}>
         <Text size="xs">{describe(i) || "—"}</Text>
         {(i.attributes.note || i.enrich_error) && <Text size="xs" c="dimmed">{i.enrich_error ?? i.attributes.note}</Text>}
+        <Text size="xs" c="dimmed">
+          {[i.found_by ? SOURCES[i.found_by] : null, i.fetch_status ? FETCH[i.fetch_status] : null,
+            i.parsed_by ? `parser ${i.parsed_by}` : null,
+            i.completeness !== null ? `úplnosť ${i.completeness} %` : null].filter(Boolean).join(" · ")}
+        </Text>
       </Stack>
     ) },
     { key: "match", label: "Vlastný produkt", render: (i) => i.product_id ? (
@@ -289,7 +373,8 @@ function Items({ competitorId, state, readOnly }: { competitorId: number; state:
       <Group justify="space-between" mb="sm" align="flex-end">
         <SegmentedControl size="xs" value={filter} onChange={(v) => { setFilter(v); setPage(1); }}
                           data={FILTERS.map((f) => ({ value: f.value,
-                            label: `${f.label} (${(f.gone ? state.counts.gone : state.counts[f.match!]) ?? 0})` }))} />
+                            label: f.value === "incomplete" ? f.label
+                              : `${f.label} (${(f.gone ? state.counts.gone : state.counts[f.match!]) ?? 0})` }))} />
         <TextInput size="xs" placeholder="Hľadať v názve" leftSection={<IconSearch size={14} />} w={220} value={search}
                    onChange={(e) => { setSearch(e.currentTarget.value); setPage(1); }} aria-label="Hľadať v katalógu" />
       </Group>

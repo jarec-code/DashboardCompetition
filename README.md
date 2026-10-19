@@ -100,7 +100,8 @@ Vzor je v [.env.example](.env.example); skutočné heslá nikdy nepatria do repo
   skontrolujte (Alembic nezachytí zmeny CHECK obmedzení ani dáta).
 - Migrácie: `0001` jadro schémy, `0002` unikátne identifikátory, `0003` plánovanie a monitoring, `0004`
   upozornenia s predvolenými pravidlami, `0005` importy, `0006` verzia relácie, `0007` URL, obrázok, dostupnosť
-  a zdroj údajov vlastného produktu, `0008` príznak balíčka, `0009` objavovanie produktov konkurentov.
+  a zdroj údajov vlastného produktu, `0008` príznak balíčka, `0009` objavovanie produktov konkurentov, `0010` diagnostika
+  objavovania a front crawlera.
 
 ## Práca s aplikáciou
 
@@ -121,7 +122,11 @@ potvrďte kontrolu podmienok webu a uložte. Aplikácia v nočnom okne sama náj
 zoznam so stránkovaním alebo adaptér webu, napr. alter.cz). Nové produkty spáruje s porovnateľnými vlastnými
 podľa ročníka, predmetu, typu a dielu, prípadne podľa ISBN/EAN. Po dvoch úspešných tieňových behoch prejde
 do automatiky a spárované produkty začne sledovať. Nejednoznačné položky čakajú v záložke na kontrolu.
-Bezpečnostné pravidlá a odchýlky sú opísané v [docs/AUTO_DISCOVERY_PLAN.md](docs/AUTO_DISCOVERY_PLAN.md).
+Ak web nemá sitemapu ani feed, prejde ho riadený crawler (od katalógu, cez kategórie a série až
+po detaily produktov) s limitmi stránok, hĺbky a času. Panel „Diagnostika zdroja“ ukáže, ako sa produkty
+hľadali a ktoré časti webu sa nespracovali. Bezpečnostné pravidlá sú v
+[docs/AUTO_DISCOVERY_PLAN.md](docs/AUTO_DISCOVERY_PLAN.md) a robustné načítavanie v
+[docs/SCRAPING_ROBUSTNESS_PLAN.md](docs/SCRAPING_ROBUSTNESS_PLAN.md).
 
 **Vlastné produkty z feedu e-shopu.** Nastavenia → Vlastné produkty z feedu e-shopu: adresa feedu
 (pre etaktik.cz `https://www.etaktik.cz/export/heureka.php`), trh `CZ`, interval 24 h, zapnúť „Automaticky“.

@@ -1,6 +1,6 @@
 # Analýza a plán: robustné načítavanie produktov z webov konkurencie
 
-Stav: **návrh na schválenie** (19. 10. 2026). Zdrojový kód sa v tejto fáze nemenil.
+Stav: **schválené 19. 10. 2026; etapy 1 a 2 implementované** (kapitola 14). Etapy 3–5 čakajú.
 
 Dokument oddeľuje **potvrdené zistenia** (✔ overené na produkčných dátach, na webe alebo na kóde) od
 **predpokladov** (❓ treba overiť v implementácii).
@@ -408,3 +408,55 @@ Očakávané výsledky po etapách 1 a 2:
 
 **Okamžitý krok bez vývoja:** pri Prometheovi zmeniť v Nastaveniach scrapingu parser z `alter_cz` na
 „Automaticky“. Je to chyba konfigurácie, ktorá by inak znehodnotila aj budúce riešenie.
+
+---
+
+## 14. Implementácia etáp 1 a 2 (19. 10. 2026)
+
+**Etapa 1:**
+- `app/scraping/urlnorm.py`: kanonická URL (bez fragmentu, session ID, sledovacích a tlačových parametrov,
+  zoradené parametre) a šablóny URL.
+- `app/scraping/discover.py`: produktové odkazy aj podľa query (`id_katalog=306`, `product_id=…`,
+  `zobraz=detail`); vyhľadávanie, košík a tlač sa vynechávajú.
+- `app/services/discovery.py` (`_catalogue_links`): odkaz na katalóg aj podľa `alt`/`title` obrázka a podľa query.
+- `app/scraping/parsers/heuristic.py`: nový parser „Z textu stránky“ (názov z `<h1>` alebo prvku s „názvovou“
+  triedou, cena pri návestí, ISBN/EAN). Je to posledný krok parsera „Automaticky“. Pri objavovaní sa navyše
+  pri zlyhaní nastaveného parsera skúsi „Automaticky“, takže zlý parser `alter_cz` pri Prometheovi nevadí.
+- `app/scraping/fetcher.py`: `Request-rate` z robots.txt (aj s časovým oknom). Platí pre objavovanie aj pre bežné
+  kontroly cien, spolu s `Crawl-delay`.
+- Položky katalógu majú `found_by`, `parsed_by`, `fetch_status`, `fetched_at`, `canonical_url`, `category`
+  a `completeness`. Beh má stav `partial` (migrácia `0010`).
+- Sitemap: šablóny URL, ktoré po 5 stránkach nedali produkt, sa ďalej nenačítavajú (prípad Prodos).
+
+**Etapa 2:**
+- Tabuľka `discovery_urls` (front a navštívené stránky).
+- Crawler v `Runner`: `_seed`, `_crawl_next`, `_enqueue`, `_crawl_page`, `_crawled_product`; pomocné funkcie
+  v `app/scraping/crawl.py`.
+- Priorita: produktové šablóny pred zoznamami pred neznámymi; šablóny bez výnosu sa nesledujú.
+- Limity: stránky na beh, hĺbka, dni behu, rozpočet za noc.
+- Produktové stránky z minulých behov sa nečítajú znova, zoznamy áno. Duplicity podľa ISBN/EAN sa nevytvárajú.
+- Pri dosiahnutí limitu alebo zlyhaní stránok je beh „čiastočne“ a nič sa neoznačí ako zmiznuté.
+  Nefunkčné odkazy (404) sa evidujú osobitne a beh neznehodnocujú.
+- Detekcia už nekončí chybou: keď nie je sitemap, pokračuje crawlerom od katalógu a domovskej stránky.
+  Keď sitemap alebo zoznam nevráti produkty, beh prejde na crawler.
+- UI (záložka Katalóg konkurenta):
+  - limity,
+  - stav „čiastočne“,
+  - stĺpce Stránky a S cenou,
+  - panel „Diagnostika zdroja“ (postup hľadania, typy stránok a ich výnos, nespracované časti webu so vzorovou URL),
+  - pri položke zdroj, stav načítania, parser a úplnosť,
+  - filter „Neúplné“.
+- API: `GET /competitors/{id}/discovery/urls`.
+
+**Testy:**
+- Uložené stránky Promethea (domovská, katalóg, séria, podséria, 2 detaily, robots.txt): rozpoznanie katalógu
+  za obrázkom, produkty v query, heuristická cena a ISBN, Request-rate v noci a cez deň.
+- Prechod katalógom a sériami, žiadny detail dvakrát, limit → „čiastočne“, opakovaný beh bez opätovného
+  čítania produktov, sitemap celého webu so zbytočnými stránkami, záloha na crawler.
+- Regresia alter.cz (adaptér, ceny zo zoznamu) bez zmeny.
+- E2E: web v štruktúre Promethea prejdený v prehliadači, diagnostika a párovanie podľa ISBN.
+- Spolu: backend 372, Vitest 4, e2e 31.
+
+**Odchýlka:** web bez sitemapy sa už nečíta ako „zoznam s ďalšou stranou“, ale crawlerom od katalógu. Počet
+požiadaviek je rovnaký (detaily sa aj predtým načítavali jednotlivo), výsledok je úplnejší: prejdú sa aj
+kategórie a série.

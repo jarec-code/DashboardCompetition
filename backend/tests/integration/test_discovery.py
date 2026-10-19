@@ -14,6 +14,7 @@ from app.models import (
     CompetitorProduct,
     CurrentPrice,
     DiscoveryRun,
+    DiscoveryUrl,
     PriceHistory,
     Product,
     ProductPrice,
@@ -32,7 +33,7 @@ PAGE_LAST = (ALTER / "shop_page_11.html").read_text(encoding="utf-8")
 class FakeSite:
     """A website: path (with query) -> (status, body). Records every request."""
 
-    def __init__(self, pages: dict[str, tuple[int, str]]):
+    def __init__(self, pages: dict[str, tuple]):
         self.pages = pages
         self.requests: list[str] = []
 
@@ -40,7 +41,9 @@ class FakeSite:
         def handle(request: httpx.Request) -> httpx.Response:
             target = request.url.raw_path.decode()
             self.requests.append(target)
-            status, body = self.pages.get(target, (404, "<h1>Nenalezeno</h1>"))
+            status, body, *kind = self.pages.get(target, (404, "<h1>Nenalezeno</h1>"))
+            if isinstance(body, bytes):  # a saved page in its own encoding, e.g. windows-1250
+                return httpx.Response(status, content=body, headers={"content-type": kind[0]})
             kind = "application/xml" if body.lstrip().startswith("<?xml") else "text/html; charset=utf-8"
             return httpx.Response(status, text=body, headers={"content-type": kind})
         return Fetcher(Settings(), resolver=lambda h, p: ["93.184.216.34"], transport=httpx.MockTransport(handle))
@@ -213,7 +216,7 @@ def test_generic_site_with_sitemap_from_robots(db):
     assert settings_of(db, shop).source.urls == ["https://shop.example.cz/mapa.xml"]
 
 
-def test_generic_site_listing_found_from_home_page(db):
+def test_generic_site_without_sitemap_is_crawled_from_the_catalogue(db):
     competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
     cards = "".join(f'<div class="card"><a href="/produkt/{n}">Kniha {n}</a></div>' for n in range(1, 15))
     site = FakeSite({
@@ -224,9 +227,22 @@ def test_generic_site_listing_found_from_home_page(db):
         **{f"/produkt/{n}": (200, jsonld_page(f"Kniha {n}", "100")) for n in range(1, 16)},
     })
     run = run_all(db, site)
-    assert run.status == "succeeded" and run.stats["detected"] == "listing"
-    assert run.stats["pages"] == 2 and run.stats["found"] == 15  # pagination followed
-    assert "/kontakt" not in site.requests
+    assert run.status == "succeeded" and run.stats["detected"] == "crawl"
+    assert run.stats["found"] == 15 and run.stats["products_read"] == 15  # pagination followed, details read
+    assert site.requests.count("/produkt/1") == 1  # every page once
+    attempts = [a["what"] for a in run.stats["attempts"]]
+    assert attempts == ["robots.txt", "/sitemap.xml", "domovská stránka", "crawler"]
+    item = db.scalar(select(CatalogItem).where(CatalogItem.key == "https://knihy.example.cz/produkt/3"))
+    assert (item.found_by, item.fetch_status, item.parsed_by, item.completeness) == ("crawl", "ok", "jsonld", 70)
+
+    # Next run: listings are read again, product pages read before are not.
+    site.requests.clear()
+    db.refresh(db.scalar(select(Competitor).where(Competitor.domain == "knihy.example.cz")).scrape_config)
+    c = db.scalar(select(Competitor).where(Competitor.domain == "knihy.example.cz"))
+    request_again(db, c)
+    run = run_all(db, site)
+    assert run.stats["found"] == 15 and not any(r.startswith("/produkt/") for r in site.requests)
+    assert run.stats.get("new") is None
 
 
 def test_nothing_happens_without_consent_or_outside_the_window(db):
@@ -306,3 +322,112 @@ def test_settings_catalogue_and_decisions_api(client, db):
     assert monitoring[0]["competitor_name"] == "Alter" and monitoring[0]["mode"] == "shadow"
 
     assert client.put(url, json={"mode": "off", "terms_confirmed": True}).json()["settings"]["mode"] == "off"
+
+
+PROMETHEUS = Path(__file__).parent.parent / "fixtures" / "html" / "prometheus"
+
+
+def prometheus_site() -> FakeSite:
+    """Saved pages of prometheus-nakl.cz (windows-1250): products only behind query URLs, menu of images,
+    the catalogue split into series; no sitemap, no structured data."""
+    cp1250 = "text/html; charset=windows-1250"
+    raw = lambda name: (PROMETHEUS / name).read_bytes()  # noqa: E731
+    pages = {
+        "/robots.txt": (200, (PROMETHEUS / "robots.txt").read_text(encoding="cp1250")),
+        "/": (200, raw("home.html"), cp1250),
+        "/index.php?zobraz=katalog": (200, raw("katalog.html"), cp1250),
+        "/index.php?id2=1&zobraz=id2": (200, raw("id2_1.html"), cp1250),
+        "/index.php?id3=1&zobraz=id3": (200, raw("id3_1.html"), cp1250),
+    }
+    detail = raw("detail_2.html")
+    for n in range(1, 40):  # every detail answers with a saved detail page whose title and ISBN are made unique
+        page = detail.replace("pracovní sešit 1".encode("cp1250"), f"díl {n}".encode("cp1250")) \
+                     .replace(b"978-80-7196-310-3", f"978-80-7196-{n:03d}-0".encode())
+        pages[f"/index.php?id_katalog={n}&zobraz=detail"] = (200, page, cp1250)
+    pages["/index.php?id_katalog=306&zobraz=detail"] = (200, raw("detail_306.html"), cp1250)
+    return FakeSite(pages)
+
+
+def test_prometheus_is_crawled_through_its_catalogue_and_series(db):
+    competitor(db, "Prometheus", "https://prometheus-nakl.cz/", "prometheus-nakl.cz", max_pages=120)
+    prometheus = db.scalar(select(Competitor).where(Competitor.domain == "prometheus-nakl.cz"))
+    prometheus.scrape_config.parser_type = "alter_cz"  # misconfigured as in production: the automatic parser helps
+    db.commit()
+    site = prometheus_site()
+    run = run_all(db, site, limit=1000)
+    assert run.stats["detected"] == "crawl", run.stats.get("attempts")
+    assert run.status == "succeeded" and run.stats["broken_links"] > 0  # links to pages the fake site lacks
+    details = {r for r in site.requests if "zobraz=detail" in r}
+    items = list(db.scalars(select(CatalogItem)))
+    assert len(items) >= 30 and all(i.price is not None and i.found_by == "crawl" for i in items)
+    assert len(details) == len({r.split("&")[0] for r in details})  # no detail page read twice
+    assert "/index.php?zobraz=katalog" in site.requests or "/index.php?zobraz=katalog" in str(site.requests)
+    stereometrie = next(i for i in items if i.title == "Matematika pro SŠ – Stereometrie – také E-KNIHA")
+    assert (stereometrie.price, stereometrie.identifiers, stereometrie.parsed_by) == (
+        Decimal("238.00"), {"isbn": "9788071965237"}, "heuristic")
+    assert not any("tisk=ano" in r or "hledany_text" in r for r in site.requests)  # print pages and search skipped
+    rows = {r.url: r for r in db.scalars(select(DiscoveryUrl))}
+    assert rows["https://prometheus-nakl.cz/index.php?zobraz=katalog"].kind == "listing"
+    assert run.stats["templates"]["/index.php?id_katalog={N}&zobraz=detail"]["products"] >= 30
+
+
+def test_crawl_limit_gives_a_partial_run_without_marking_anything_gone(db):
+    competitor(db, "Prometheus", "https://prometheus-nakl.cz/", "prometheus-nakl.cz", max_pages=10)
+    run = run_all(db, prometheus_site(), limit=1000)
+    assert run.status == "partial" and "limit 10 stránok" in run.stats["incomplete"][0]
+    assert run.stats["skipped_urls"] > 0 and run.stats["gone_check"].startswith("vynechané")
+    skipped = db.scalar(select(func.count(DiscoveryUrl.id)).where(DiscoveryUrl.status == "skipped"))
+    assert skipped == run.stats["skipped_urls"]
+
+
+def test_sitemap_of_the_whole_website_skips_page_types_without_products(db):
+    competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz")
+    locs = [f"https://ucebnice.example.cz/clanky/clanek-{n}" for n in range(1, 21)] + \
+           [f"https://ucebnice.example.cz/kniha/{n}" for n in range(1, 4)]
+    sitemap = '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + \
+              "".join(f"<url><loc>{u}</loc></url>" for u in locs) + "</urlset>"
+    site = FakeSite({
+        "/robots.txt": (200, "User-agent: *\nSitemap: https://ucebnice.example.cz/sitemap.xml\n"),
+        "/sitemap.xml": (200, sitemap),
+        **{f"/clanky/clanek-{n}": (200, f"<h1>Článek {n}</h1><p>Text bez ceny.</p>") for n in range(1, 21)},
+        **{f"/kniha/{n}": (200, jsonld_page(f"Kniha {n}", "99")) for n in range(1, 4)},
+    })
+    run = run_all(db, site)
+    articles = [r for r in site.requests if r.startswith("/clanky/")]
+    assert len(articles) == 5  # after five articles without a price the rest is skipped without a request
+    assert run.stats["skipped_urls"] == 15 and run.status == "succeeded"
+    assert db.scalar(select(func.count(CatalogItem.id)).where(CatalogItem.fetch_status == "skipped")) == 15
+    assert db.scalar(select(func.count(CatalogItem.id)).where(CatalogItem.price.is_not(None))) == 3
+
+
+def test_an_empty_source_falls_back_to_the_crawler(db):
+    competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
+    empty = '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' \
+            "<url><loc>https://jinde.cz/a</loc></url></urlset>"  # only another domain: nothing usable
+    site = FakeSite({
+        "/robots.txt": (200, "User-agent: *\nSitemap: https://knihy.example.cz/sitemap.xml\n"),
+        "/sitemap.xml": (200, empty),
+        "/": (200, '<a href="/produkt/1">Kniha 1</a><a href="/produkt/2">Kniha 2</a>'),
+        "/produkt/1": (200, jsonld_page("Kniha 1", "100")),
+        "/produkt/2": (200, jsonld_page("Kniha 2", "120")),
+    })
+    run = run_all(db, site)
+    assert run.status == "succeeded" and run.stats["fell_back"] is True and run.stats["found"] == 2
+    assert run.stats["attempts"][-1]["what"] == "zdroj sitemap"
+
+
+def test_diagnostics_api(client, db):
+    from tests.conftest import login, make_user
+
+    c = competitor(db, "Prometheus", "https://prometheus-nakl.cz/", "prometheus-nakl.cz", max_pages=10)
+    run_all(db, prometheus_site(), limit=1000)
+    make_user("viewer@example.com", role="viewer")
+    login(client, "viewer@example.com")
+    urls = client.get(f"/api/competitors/{c.id}/discovery/urls").json()
+    assert urls["by_status"]["skipped"] > 0 and urls["by_kind"]["listing"] >= 1
+    assert urls["problems"][0]["status"] == "skipped" and "limit" in urls["problems"][0]["reason"]
+    runs = client.get(f"/api/competitors/{c.id}/discovery").json()["runs"]
+    assert runs[0]["status"] == "partial" and runs[0]["stats"]["attempts"]
+    items = client.get(f"/api/competitors/{c.id}/catalog", params={"match_status": "unrelated"}).json()["items"]
+    assert items and items[0]["found_by"] == "crawl" and items[0]["completeness"] == 85
+    assert client.get(f"/api/competitors/{c.id}/catalog", params={"incomplete": True}).json()["total"] == 0

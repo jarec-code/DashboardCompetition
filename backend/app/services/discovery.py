@@ -9,6 +9,10 @@ or on the next night.
 
 Discovery run (weekly):  detect source (once) -> list pages -> compare with the catalogue (new / gone)
                          -> read product pages of new items -> match -> track (automatic mode only)
+Sources: an adapter, a sitemap, a feed, listing pages, or the guided crawler ("crawl", docs/
+SCRAPING_ROBUSTNESS_PLAN.md) that follows internal links from entry pages, reads product pages on the way
+and learns which URL templates lead to products. When detection finds no sitemap, or a source returns no
+products, the run falls back to the crawler instead of failing.
 Prices run (daily):      list pages only, to update offers whose price is read from the listing.
 
 Safety: robots.txt is respected; HTTP 403/429 or a bot challenge stops discovery of the competitor for
@@ -16,6 +20,7 @@ Safety: robots.txt is respected; HTTP 403/429 or a bot challenge stops discovery
 marked as gone and the run stops with a warning.
 """
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -25,16 +30,26 @@ from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.models import CatalogItem, Competitor, CompetitorProduct, CurrentPrice, DiscoveryRun, ScrapeConfig, ScrapeRun
-from app.scraping import catalog
-from app.scraping.discover import discover_links
+from app.models import (
+    CatalogItem,
+    Competitor,
+    CompetitorProduct,
+    CurrentPrice,
+    DiscoveryRun,
+    DiscoveryUrl,
+    ScrapeConfig,
+    ScrapeRun,
+)
+from app.scraping import catalog, crawl
+from app.scraping.discover import discover_links, query_says_product
 from app.scraping.fetcher import Fetcher, FetchError
 from app.scraping.parsers.base import Extracted, PageContext, ParseError
 from app.scraping.parsers.registry import get_parser
+from app.scraping.urlnorm import safe_canonical, template
 from app.services import alerts, pricing, scheduling
 from app.services.comparable import OwnCatalogue, plain
 from app.services.urls import InvalidUrl, normalize_url
@@ -66,7 +81,7 @@ class SourceSpec:
 
 
 class DiscoverySource(BaseModel):
-    type: Literal["sitemap", "feed", "listing", "adapter"]
+    type: Literal["sitemap", "feed", "listing", "adapter", "crawl"]
     urls: list[str] = Field(min_length=1, max_length=20)
     pattern: str | None = Field(default=None, max_length=300)  # regular expression on the URL path
     adapter: str | None = None
@@ -101,6 +116,13 @@ class DiscoverySettings(BaseModel):
     budget_per_night: int = Field(default=120, ge=10, le=1000)
     spacing_seconds: int = Field(default=10, ge=5, le=300)
     source: DiscoverySource | None = None
+    # crawler limits and site rules (docs/SCRAPING_ROBUSTNESS_PLAN.md, 5.4)
+    max_pages: int = Field(default=400, ge=10, le=20000)   # pages read by one run
+    max_depth: int = Field(default=4, ge=1, le=10)         # link steps from an entry page
+    max_run_days: int = Field(default=14, ge=1, le=60)     # a run spread over nights ends after this
+    extra_domains: list[str] = Field(default_factory=list, max_length=10)  # e.g. a shop on another domain
+    drop_params: list[str] = Field(default_factory=list, max_length=50)   # URL parameters to ignore
+    learned_templates: dict[str, dict[str, int]] = Field(default_factory=dict)  # yield per URL template
     # state, kept by the runner
     run_requested: bool = False
     next_run_at: datetime | None = None
@@ -226,8 +248,8 @@ class Runner:
         self.run.stats = {**self.run.stats, **values}
 
     def _spacing(self, url: str) -> float:
-        delay = self.fetcher.crawl_delay(url) if self.fetcher.robots_cached(url) else None
-        return max(self.settings.spacing_seconds, self.config.min_interval_seconds, delay or 0)
+        delay = self.fetcher.min_interval(url) if self.fetcher.robots_cached(url) else 0  # Crawl-delay, Request-rate
+        return max(self.settings.spacing_seconds, self.config.min_interval_seconds, delay)
 
     def _budget_left(self) -> bool:
         today = datetime.now(UTC).astimezone(ZoneInfo(get_settings().timezone)).date().isoformat()
@@ -287,6 +309,9 @@ class Runner:
         if phase == "detect":
             return self._detect_url()
         if phase == "list":
+            if self.settings.source and self.settings.source.type == "crawl":
+                row = self._crawl_next()
+                return row.url if row else None
             return self.run.queue[0] if self.run.queue else None
         if phase == "enrich":
             item = self._next_to_enrich()
@@ -301,6 +326,8 @@ class Runner:
                 return
             if self.run.phase == "detect":
                 self._detect_with(url)
+            elif self.run.phase == "list" and self.settings.source.type == "crawl":
+                self._crawl_page(url)
             elif self.run.phase == "list":
                 self._list_page(url)
             else:
@@ -313,6 +340,8 @@ class Runner:
         if self.run.phase == "list":
             if self.run.kind == "prices":
                 self._finish_prices()
+            elif not self.run.seen_keys and self._may_fall_back():
+                self._fall_back_to_crawl("zdroj nevrátil žiadne produkty")
             else:
                 self._reconcile()
                 self.run.phase = "enrich"
@@ -322,9 +351,10 @@ class Runner:
             if self.settings.mode == "auto":
                 self._track()
             self._finish_discovery()
-        elif self.run.phase == "detect":
-            raise Stop("Zdroj produktov sa nepodarilo nájsť automaticky. V nastaveniach objavovania zadajte adresu "
-                       "sitemap, feedu alebo stránky so zoznamom produktov.", status="failed")
+        elif self.run.phase == "detect":  # no sitemap: the crawler reads the website from its entry pages
+            candidates = list(self._detect_state().get("candidates", []))
+            self._attempt("crawler", f"vstupné stránky: {', '.join(candidates) or 'domovská stránka'}")
+            self._use_source(SourceSpec("crawl", list(dict.fromkeys(candidates + [self.competitor.base_url]))))
 
     def _request_failed(self, url: str, exc: FetchError) -> None:
         blocked = exc.status in (403, 429) or "botom" in str(exc)
@@ -335,8 +365,17 @@ class Runner:
         if self.run.phase == "enrich" and exc.status in (404, 410):
             item = self._next_to_enrich()
             if item is not None:
-                self._enriched(item, error=str(exc))
+                self._enriched(item, error=str(exc), status="failed")
             return
+        crawling = self.run.phase == "list" and self.settings.source and self.settings.source.type == "crawl"
+        if crawling:
+            row = self._row(url)
+            if row is not None:
+                row.status, row.http_status, row.error, row.fetched_at = "failed", exc.status, str(exc)[:500], self.now
+            if exc.status in (404, 410):
+                self._stat("broken_links")  # a dead link on the website, not a gap in what was read
+                return
+            self._stat("failed_urls")
         self.run.errors_in_row += 1
         self._set_stats(last_error=str(exc)[:300])
         if self.run.errors_in_row >= ERRORS_TO_STOP:
@@ -372,16 +411,32 @@ class Runner:
                                         adapter=adapter.name))
             return self._next_url()
         # step 0 reads the sitemaps announced in robots.txt (already loaded, no request of its own)
-        steps = [base, urljoin(base, "/sitemap.xml"), base] + list(state.get("candidates", []))
+        steps = [base, urljoin(base, "/sitemap.xml"), base]
         index = state["step"]
         return steps[index] if index < len(steps) else None
 
     def _use_source(self, spec: SourceSpec) -> None:
-        self.settings.source = DiscoverySource(type=spec.type, urls=spec.urls, pattern=spec.pattern,
+        self.settings.source = DiscoverySource(type=spec.type, urls=spec.urls[:20], pattern=spec.pattern,
                                                adapter=spec.adapter, detected=True)
         self.run.source_type, self.run.phase, self.run.queue = spec.type, "list", list(spec.urls)
         self._set_stats(detected=spec.type)
         self._save()
+
+    def _attempt(self, what: str, result: str) -> None:
+        """Diagnostics: what was tried to find the products, and with what result."""
+        attempts = list(self.run.stats.get("attempts") or [])
+        attempts.append({"what": what, "result": result[:300]})
+        self._set_stats(attempts=attempts[-30:])
+
+    def _may_fall_back(self) -> bool:
+        source = self.settings.source
+        return (self.run.kind == "discovery" and source is not None and source.detected
+                and source.type in ("sitemap", "listing") and not self.run.stats.get("fell_back"))
+
+    def _fall_back_to_crawl(self, reason: str) -> None:
+        self._attempt(f"zdroj {self.settings.source.type}", f"{reason}; pokračuje prechádzanie webu")
+        self._set_stats(fell_back=True)
+        self._use_source(SourceSpec("crawl", [self.competitor.base_url]))
 
     def _detect_with(self, url: str) -> None:
         state = self._detect_state()
@@ -391,6 +446,7 @@ class Runner:
         domain = self.competitor.domain
         if step == 0:  # sitemaps announced in robots.txt
             sitemaps = [s for s in self.fetcher.sitemaps(self.competitor.base_url) if catalog._belongs(s, domain)]
+            self._attempt("robots.txt", f"sitemap: {', '.join(sitemaps)}" if sitemaps else "bez sitemap")
             if sitemaps:
                 self._use_source(SourceSpec("sitemap", sitemaps[:5]))
             return
@@ -398,6 +454,7 @@ class Runner:
             response = self._fetch(url, max_bytes=5 * 1024 * 1024)
         except FetchError as exc:
             if exc.status in (404, 410):
+                self._attempt(urlsplit(url).path or "/", f"neexistuje (HTTP {exc.status})")
                 return  # this candidate does not exist; try the next one
             raise
         text = response.text or ""
@@ -405,17 +462,157 @@ class Runner:
             try:
                 result = catalog.read_sitemap(text, url, domain)
             except ValueError:
+                self._attempt("/sitemap.xml", "nie je platná sitemap")
                 return
             if result.items or result.next_urls:
+                self._attempt("/sitemap.xml", f"{len(result.items) or len(result.next_urls)} záznamov")
                 self._use_source(SourceSpec("sitemap", [response.url]))
             return
+        # The home page: links that look like the catalogue become entry pages of the crawler, which reads
+        # listings, their categories and pagination, and the product pages (this ends detection).
         links = [c for c in discover_links(text, response.url, domain, set()) if c["score"] >= 2]
-        if len(links) >= MIN_LISTING_LINKS:
-            self._use_source(SourceSpec("listing", [response.url]))
+        state["candidates"] = _catalogue_links(text, response.url, domain)
+        state["step"] = 99
+        self._set_stats(detect=state)
+        self._attempt("domovská stránka", f"{len(links)} produktových odkazov, katalóg: "
+                                          f"{', '.join(state['candidates']) or 'nenájdený'}")
+
+    # ----- C: the guided crawler (source "crawl") -----
+
+    def _domains(self) -> set[str]:
+        return {self.competitor.domain, *(d.lower().removeprefix("www.") for d in self.settings.extra_domains)}
+
+    def _drop(self) -> set[str]:
+        return set(self.settings.drop_params)
+
+    def _template_stats(self) -> dict[str, dict[str, int]]:
+        return crawl.merged(self.settings.learned_templates, self.run.stats.get("templates") or {})
+
+    def _count_template(self, url: str, product: bool = False, listing: bool = False) -> None:
+        templates = {k: dict(v) for k, v in (self.run.stats.get("templates") or {}).items()}
+        row = templates.setdefault(template(url), {"pages": 0, "products": 0, "listings": 0})
+        row["pages"] += 1
+        row["products"] += int(product)
+        row["listings"] += int(listing)
+        self._set_stats(templates=templates)
+
+    def _row(self, url: str) -> DiscoveryUrl | None:
+        return self.db.scalar(select(DiscoveryUrl).where(DiscoveryUrl.competitor_id == self.competitor.id,
+                                                         DiscoveryUrl.url == url))
+
+    def _seed(self) -> None:
+        """Start of a crawl run: entry pages, and listings of earlier runs read again (new products appear there).
+        Product pages read before are not read again; failed pages get one more try."""
+        drop = self._drop()
+        entries = [u for u in (safe_canonical(u, drop) for u in self.settings.source.urls) if u]
+        self._enqueue(entries, depth=0, priority=crawl.PRIORITY_ENTRY)
+        self.db.execute(update(DiscoveryUrl).where(
+            DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.run_id != self.run.id,
+            or_(DiscoveryUrl.kind.in_(("listing", "category")), DiscoveryUrl.status == "failed"),
+        ).values(status="queued", run_id=self.run.id, error=None))
+        self._set_stats(seeded=True)
+
+    def _crawl_next(self) -> DiscoveryUrl | None:
+        if not self.run.stats.get("seeded"):
+            self._seed()
+        if self.run.stats.get("limit_hit"):
+            return None
+        row = self.db.scalar(select(DiscoveryUrl).where(
+            DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.run_id == self.run.id,
+            DiscoveryUrl.status == "queued").order_by(DiscoveryUrl.priority, DiscoveryUrl.depth, DiscoveryUrl.id))
+        if row is None:
+            return None
+        limit = None
+        if self.run.stats.get("pages", 0) >= self.settings.max_pages:
+            limit = f"dosiahnutý limit {self.settings.max_pages} stránok na beh"
+        elif self.now - self.run.started_at > timedelta(days=self.settings.max_run_days):
+            limit = f"beh trval dlhšie ako {self.settings.max_run_days} dní"
+        if limit:
+            skipped = self.db.execute(update(DiscoveryUrl).where(
+                DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.run_id == self.run.id,
+                DiscoveryUrl.status == "queued").values(status="skipped", error=limit)).rowcount
+            self._set_stats(limit_hit=limit, skipped_urls=self.run.stats.get("skipped_urls", 0) + skipped)
+            return None
+        return row
+
+    def _enqueue(self, urls: list[str], depth: int, priority: int | None = None) -> None:
+        """Queue pages for this run; known product pages only count as seen; dead templates are left out."""
+        if not urls:
             return
-        if step == 2:  # the home page: remember links that look like the catalogue
-            state["candidates"] = _catalogue_links(text, response.url, domain)
-            self._set_stats(detect=state)
+        stats = self._template_stats()
+        existing = {r.url: r for r in self.db.scalars(select(DiscoveryUrl).where(
+            DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.url.in_(urls)))}
+        seen = set(self.run.seen_keys)
+        for url in urls:
+            tpl = template(url)
+            row = existing.get(url)
+            if row is not None:
+                if row.run_id == self.run.id:
+                    continue
+                if row.kind == "product" and row.status == "done":
+                    seen.add(url)  # read before: still listed, so not gone
+                    continue
+            if depth > 0 and crawl.dead(tpl, stats):
+                self._stat("dead_links")
+                continue
+            rank = priority if priority is not None else crawl.priority(url, stats)
+            if row is None:
+                self.db.add(DiscoveryUrl(competitor_id=self.competitor.id, run_id=self.run.id, url=url[:2048],
+                                         template=tpl[:600], depth=depth, priority=rank, status="queued",
+                                         kind="unknown", links_found=0, products_found=0))
+            else:
+                row.run_id, row.status, row.depth, row.priority, row.error = self.run.id, "queued", depth, rank, None
+        self.run.seen_keys = sorted(seen)
+        self.db.flush()
+
+    def _crawl_page(self, url: str) -> None:
+        row = self._row(url)
+        response = self._fetch(url)
+        html = response.text or ""
+        links = crawl.page_links(html, response.url, self._domains(), self._drop())
+        stats = self._template_stats()
+        product_links = [link for link in links if crawl.product_like(link, stats)]
+        data, _ = self._parse_product(html, response.url)
+        if data is not None:
+            kind = "product"
+            self._crawled_product(url, data, html)
+        elif len(product_links) >= crawl.LISTING_MIN_PRODUCT_LINKS:
+            kind = "listing"
+        elif any(stats.get(template(link), {}).get("listings") for link in links):
+            kind = "category"
+        else:
+            kind = "info"
+        self._count_template(url, product=kind == "product", listing=kind == "listing")
+        row.kind, row.status, row.http_status, row.error = kind, "done", response.status, None
+        row.links_found, row.products_found, row.fetched_at = len(links), len(product_links), self.now
+        self._stat("pages")
+        if row.depth < self.settings.max_depth:
+            follow = product_links if kind == "product" else links  # from a product page: other products only
+            self._enqueue(follow, depth=row.depth + 1)
+
+    def _crawled_product(self, url: str, data: Extracted, html: str) -> None:
+        """A product page found by the crawler: one catalogue item per page (no second request needed).
+        The same title under another URL (same ISBN/EAN) is not added twice."""
+        codes = {v for k, v in (data.identifiers or {}).items() if k in ("isbn", "ean") and v}
+        if codes:
+            twin = next((i for i in self.db.scalars(select(CatalogItem).where(
+                CatalogItem.competitor_id == self.competitor.id, CatalogItem.key != url))
+                if codes & {i.identifiers.get("isbn"), i.identifiers.get("ean")}), None)
+            if twin is not None:
+                self.run.seen_keys = sorted(set(self.run.seen_keys) | {twin.key})
+                self._stat("duplicates")
+                return
+        self._upsert(catalog.FoundItem(key=url, url=url, title=data.title, price=data.price, currency=data.currency,
+                                       identifiers=data.identifiers or {}))
+        item = self.db.scalar(select(CatalogItem).where(CatalogItem.competitor_id == self.competitor.id,
+                                                        CatalogItem.key == url))
+        self._apply_details(item, data, html)
+        item.enriched_at, item.enrich_error = self.now, None
+        if item.match_status == "unrelated" and item.match_method is None:
+            item.match_status = "new"  # was not a product before (e.g. no price), now it is
+        self.run.seen_keys = sorted(set(self.run.seen_keys) | {url})
+        self._stat("products_read")
+        self._set_stats(found=len(self.run.seen_keys))
 
     # ----- C: listing the source -----
 
@@ -466,6 +663,10 @@ class Runner:
             self.db.add(item)
             self._stat("new")
         item.url = found.url
+        if self.settings.source and item.found_by is None:
+            item.found_by = self.settings.source.type
+        if found.hints.get("category"):
+            item.category = str(found.hints["category"])[:300]
         item.title = (found.title or item.title or "")[:500] or None
         if found.price is not None:
             item.price, item.currency = found.price, found.currency or item.currency
@@ -475,6 +676,7 @@ class Runner:
         if found.hints:
             item.hints = {**item.hints, **found.hints}
         item.last_seen_at, item.missing_runs, item.status = self.now, 0, "active"
+        item.completeness = completeness(item)
         self.db.flush()
         if item.offer_id and found.price is not None and found.price_from_listing:
             self._record_listing_price(item)
@@ -493,6 +695,7 @@ class Runner:
 
     def _reconcile(self) -> None:
         found = len(self.run.seen_keys)
+        self._set_stats(found=found)
         previous = self.db.scalar(select(DiscoveryRun).where(
             DiscoveryRun.competitor_id == self.competitor.id, DiscoveryRun.kind == "discovery",
             DiscoveryRun.status == "succeeded", DiscoveryRun.id != self.run.id).order_by(DiscoveryRun.id.desc()))
@@ -503,6 +706,9 @@ class Runner:
         if before and found < before * SUSPICIOUS_DROP:
             raise Stop(f"Zdroj vrátil výrazne menej produktov ({found} oproti {before} minule). Nič sa neoznačilo "
                        "ako zmiznuté; skontrolujte, či web nezmenil štruktúru.")
+        if self.run.stats.get("limit_hit") or self.run.stats.get("failed_urls"):
+            self._set_stats(previous_found=before, gone_check="vynechané: web sa neprešiel celý")
+            return  # products not reached this time are not gone
         seen = set(self.run.seen_keys)
         for item in self.db.scalars(select(CatalogItem).where(CatalogItem.competitor_id == self.competitor.id,
                                                               CatalogItem.status == "active")):
@@ -521,34 +727,67 @@ class Runner:
     # ----- C: reading product pages of new items -----
 
     def _next_to_enrich(self) -> CatalogItem | None:
-        return self.db.scalar(select(CatalogItem).where(
-            CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
-            CatalogItem.price_from_listing.is_(False), CatalogItem.enriched_at.is_(None),
-            CatalogItem.match_status == "new").order_by(CatalogItem.id))
+        """The next item whose page is to be read. Items of URL templates that gave no product after several
+        pages (e.g. articles in a sitemap of the whole website) are skipped without a request."""
+        stats = self._template_stats()
+        for _ in range(50):
+            item = self.db.scalar(select(CatalogItem).where(
+                CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
+                CatalogItem.price_from_listing.is_(False), CatalogItem.enriched_at.is_(None),
+                CatalogItem.match_status == "new").order_by(CatalogItem.id))
+            if item is None or not crawl.dead(template(item.url), stats):
+                return item
+            self._enriched(item, error="Preskočené: stránky tohto typu (šablóna URL) nie sú produkty.",
+                           status="skipped")
+            self._stat("skipped_urls")
+        return None
 
     def _enrich(self, url: str) -> None:
         item = self._next_to_enrich()
         response = self._fetch(url)
-        spec = get_parser(self.config.parser_type)
-        try:
-            data = spec.parse(PageContext(html=response.text or "", url=response.url, config=self.config.parser_config))
-        except ParseError as exc:
-            self._enriched(item, error=str(exc))
+        data, error = self._parse_product(response.text or "", response.url)
+        self._count_template(url, product=data is not None)
+        if data is None:
+            self._enriched(item, error=error)
             return
-        if data.price is None:
-            self._enriched(item, error="Stránka nemá cenu (nejde o produkt alebo ho parser nepozná).")
-            return
+        self._apply_details(item, data, response.text or "")
+        self._enriched(item)
+
+    def _parse_product(self, html: str, url: str) -> tuple[Extracted | None, str]:
+        """Product details with the competitor's parser; when that fails, the automatic one (structured data,
+        then page text). A page without a price or a title is not a product."""
+        names = [self.config.parser_type] + (["auto"] if self.config.parser_type != "auto" else [])
+        error = ""
+        for name in names:
+            config = self.config.parser_config if name == self.config.parser_type else {}
+            try:
+                data = get_parser(name).parse(PageContext(html=html, url=url, config=config))
+            except ParseError as exc:
+                error = str(exc)
+                continue
+            if data.price is not None and data.title:
+                return data, ""
+            error = "Stránka nemá cenu alebo názov (nejde o produkt alebo ho parser nepozná)."
+        return None, error
+
+    def _apply_details(self, item: CatalogItem, data: Extracted, html: str) -> None:
         item.title = (data.title or item.title or "")[:500] or None
         item.price, item.currency = data.price, data.currency
         item.identifiers = {**item.identifiers, **(data.identifiers or {})}
-        self._enriched(item)
+        item.parsed_by, item.fetched_at, item.fetch_status = (data.source or self.config.parser_type)[:32], \
+            self.now, "ok"
+        canonical = _canonical_link(html, item.url)
+        if canonical:
+            item.canonical_url = canonical
+        item.completeness = completeness(item)
 
-    def _enriched(self, item: CatalogItem, error: str | None = None) -> None:
+    def _enriched(self, item: CatalogItem, error: str | None = None, status: str | None = None) -> None:
         item.enriched_at, item.enrich_error = self.now, (error or None) and error[:500]
         self._stat("enriched")
         if error:
             item.match_status = "unrelated"
-            self._stat("not_product")
+            item.fetch_status, item.fetched_at = status or "not_product", self.now
+            self._stat("not_product" if (status or "not_product") == "not_product" else f"{status}_items")
 
     # ----- D: matching -----
 
@@ -619,8 +858,19 @@ class Runner:
 
     def _finish_discovery(self) -> None:
         stats = self.run.stats
-        self.run.status, self.run.finished_at = "succeeded", self.now
+        incomplete = []
+        if stats.get("limit_hit"):
+            incomplete.append(stats["limit_hit"])
+        if stats.get("failed_urls"):
+            incomplete.append(f"{stats['failed_urls']} stránok sa nepodarilo načítať")
+        priced = self.db.scalar(select(func.count(CatalogItem.id)).where(
+            CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
+            CatalogItem.price.is_not(None)))
+        self._set_stats(priced=priced, incomplete=incomplete,
+                        templates=_top_templates(stats.get("templates") or {}))
+        self.run.status, self.run.finished_at = ("partial" if incomplete else "succeeded"), self.now
         self.settings.last_success_at, self.settings.last_error = self.now, None
+        self.settings.learned_templates = crawl.merged(self.settings.learned_templates, stats.get("templates") or {})
         would_track = self.db.scalar(select(func.count(CatalogItem.id)).where(
             CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
             CatalogItem.match_status == "matched", CatalogItem.offer_id.is_(None)))
@@ -628,6 +878,8 @@ class Runner:
         interval = timedelta(days=self.settings.interval_days)
         if self.settings.mode == "shadow":
             ok, why = self._quality()
+            if ok and stats.get("limit_hit"):
+                ok, why = False, f"Web sa neprešiel celý ({stats['limit_hit']})."
             self.settings.shadow_ok_runs = self.settings.shadow_ok_runs + 1 if ok else 0
             self._set_stats(quality_ok=ok, quality_note=why)
             if self.settings.shadow_ok_runs >= SHADOW_RUNS_TO_PROMOTE:
@@ -658,7 +910,8 @@ class Runner:
             return False, f"Cenu má iba {share:.0%} produktov (potrebných {MIN_PRICED_SHARE:.0%})."
         before = stats.get("previous_found")
         if before and abs(stats.get("found", 0) - before) / before > MAX_COUNT_CHANGE:
-            return False, f"Počet produktov sa zmenil o viac ako {MAX_COUNT_CHANGE:.0%} ({before} → {stats['found']})."
+            return False, (f"Počet produktov sa zmenil o viac ako {MAX_COUNT_CHANGE:.0%} "
+                           f"({before} → {stats.get('found', 0)}).")
         return True, "Kvalita v poriadku."
 
     def _finish_prices(self) -> None:
@@ -701,8 +954,33 @@ def _catalogue_links(html: str, page_url: str, domain: str) -> list[str]:
             continue
         if not catalog._belongs(url, domain) or url in found or url.rstrip("/") == page_url.rstrip("/"):
             continue
-        text = plain(urlsplit(url).path + " " + a.get_text(" ", strip=True))
+        if query_says_product(urlsplit(url).query):
+            continue  # a product detail, not the catalogue
+        image = a.find("img")
+        label = " ".join(filter(None, [a.get_text(" ", strip=True), a.get("title"),
+                                       image.get("alt") if image else None, image.get("title") if image else None]))
+        parts = urlsplit(url)
+        text = plain(parts.path + " " + parts.query.replace("=", " ").replace("&", " ") + " " + label)
         if any(word in text for word in CATALOG_WORDS):
             found.append(url)
     return found[:MAX_DETECT_CANDIDATES]
 
+
+def completeness(item: CatalogItem) -> int:
+    """0–100: title 30, price with currency 40, identifier 15, category 15."""
+    score = 30 if item.title else 0
+    score += 40 if item.price is not None and item.currency else 0
+    score += 15 if (item.identifiers or {}).get("isbn") or (item.identifiers or {}).get("ean") else 0
+    score += 15 if item.category or (item.hints or {}).get("grade") or (item.hints or {}).get("category") else 0
+    return score
+
+
+def _canonical_link(html: str, page_url: str) -> str | None:
+    match = re.search(r"<link[^>]+rel=[\"']?canonical[\"']?[^>]*>", html[:200_000], re.I)
+    href = re.search(r"href=[\"']?([^\"' >]+)", match.group(0), re.I) if match else None
+    return safe_canonical(urljoin(page_url, href.group(1))) if href else None
+
+
+def _top_templates(templates: dict[str, dict[str, int]], limit: int = 15) -> dict[str, dict[str, int]]:
+    ranked = sorted(templates.items(), key=lambda kv: (-kv[1].get("pages", 0), kv[0]))
+    return dict(ranked[:limit])

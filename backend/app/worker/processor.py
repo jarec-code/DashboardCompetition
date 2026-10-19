@@ -129,7 +129,8 @@ class Processor:
             if offer is not None else None
         # Conditional requests (ETag / Last-Modified) only for scheduled checks; manual ones always reload.
         conditional = job.kind == "scheduled" and current is not None and current.last_success_at is not None
-        self._wait_turn(domain, config.min_interval_seconds)
+        # robots.txt Crawl-delay / Request-rate may ask for a longer pause than the competitor's setting.
+        self._wait_turn(domain, max(config.min_interval_seconds, self.fetcher.min_interval(url)))
         fetched = self.fetcher.fetch(url, timeout=config.timeout_seconds,
                                      etag=current.etag if conditional else None,
                                      last_modified=current.last_modified if conditional else None)

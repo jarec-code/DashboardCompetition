@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 
 from app.api.deps import AdminUser, CurrentUser, DbSession
-from app.models import CatalogItem, Competitor, CompetitorProduct, DiscoveryRun, Product
+from app.models import CatalogItem, Competitor, CompetitorProduct, DiscoveryRun, DiscoveryUrl, Product
 from app.schemas.common import Page
 from app.scraping.parsers.base import Extracted
 from app.services import discovery, pricing
@@ -22,6 +22,9 @@ class DiscoverySettingsIn(BaseModel):
     interval_days: int = Field(default=7, ge=1, le=60)
     budget_per_night: int = Field(default=120, ge=10, le=1000)
     spacing_seconds: int = Field(default=10, ge=5, le=300)
+    max_pages: int = Field(default=400, ge=10, le=20000)
+    max_depth: int = Field(default=4, ge=1, le=10)
+    max_run_days: int = Field(default=14, ge=1, le=60)
     source: discovery.DiscoverySource | None = None  # None = keep (or detect automatically)
     redetect: bool = False  # forget the source and find it again
 
@@ -88,6 +91,7 @@ def put_discovery(competitor_id: int, data: DiscoverySettingsIn, db: DbSession, 
     settings.mode = data.mode
     settings.interval_days, settings.budget_per_night = data.interval_days, data.budget_per_night
     settings.spacing_seconds = data.spacing_seconds
+    settings.max_pages, settings.max_depth, settings.max_run_days = data.max_pages, data.max_depth, data.max_run_days
     if data.source is not None:
         settings.source = data.source.model_copy(update={"detected": False})
     elif data.redetect:
@@ -137,6 +141,13 @@ class CatalogItemOut(BaseModel):
     offer_id: int | None
     candidates: list[dict[str, Any]]
     enrich_error: str | None
+    found_by: str | None
+    parsed_by: str | None
+    fetch_status: str | None
+    fetched_at: datetime | None
+    canonical_url: str | None
+    category: str | None
+    completeness: int | None
     first_seen_at: datetime
     last_seen_at: datetime
 
@@ -151,6 +162,7 @@ def list_catalog(competitor_id: int, db: DbSession, _user: CurrentUser,
                  match_status: Literal["new", "matched", "review", "unrelated", "ignored"] | None = None,
                  item_status: Literal["active", "gone"] = "active",
                  q: str | None = Query(default=None, max_length=200),
+                 incomplete: bool = False,  # products without a price, title or identifier
                  page: int = Query(default=1, ge=1), page_size: int = Query(default=50, ge=1, le=200)
                  ) -> Page[CatalogItemOut]:
     _competitor(db, competitor_id)
@@ -158,6 +170,9 @@ def list_catalog(competitor_id: int, db: DbSession, _user: CurrentUser,
              .where(CatalogItem.competitor_id == competitor_id, CatalogItem.status == item_status))
     if match_status:
         query = query.where(CatalogItem.match_status == match_status)
+    if incomplete:
+        query = query.where(CatalogItem.fetch_status.is_distinct_from("skipped"),
+                            func.coalesce(CatalogItem.completeness, 0) < 70)
     if q and q.strip():
         pattern = f"%{q.strip().lower()}%"
         query = query.where(or_(func.lower(CatalogItem.title).like(pattern), func.lower(Product.name).like(pattern)))
@@ -232,3 +247,36 @@ def reset_item(item_id: int, db: DbSession, _admin: AdminUser) -> CatalogItemOut
         item.product_id = None
     item.match_status, item.match_method, item.candidates = "new", None, []
     return _result(db, item)
+
+
+class UrlGroup(BaseModel):
+    template: str
+    status: str
+    reason: str | None
+    count: int
+    examples: list[str]
+
+
+class UrlsOut(BaseModel):
+    by_status: dict[str, int]  # queued / done / failed / skipped
+    by_kind: dict[str, int]    # product / listing / category / info / unknown
+    problems: list[UrlGroup]   # failed and skipped pages grouped by URL template and reason
+
+
+@router.get("/competitors/{competitor_id}/discovery/urls", response_model=UrlsOut)
+def discovery_urls(competitor_id: int, db: DbSession, _user: CurrentUser) -> UrlsOut:
+    """What the crawler knows about the website, and which parts could not be processed."""
+    _competitor(db, competitor_id)
+    base = select(DiscoveryUrl).where(DiscoveryUrl.competitor_id == competitor_id)
+    by_status = dict(db.execute(select(DiscoveryUrl.status, func.count()).where(
+        DiscoveryUrl.competitor_id == competitor_id).group_by(DiscoveryUrl.status)).all())
+    by_kind = dict(db.execute(select(DiscoveryUrl.kind, func.count()).where(
+        DiscoveryUrl.competitor_id == competitor_id, DiscoveryUrl.status == "done").group_by(DiscoveryUrl.kind)).all())
+    groups: dict[tuple[str, str, str | None], list[str]] = {}
+    for row in db.scalars(base.where(DiscoveryUrl.status.in_(("failed", "skipped"))).order_by(DiscoveryUrl.id)
+                          .limit(5000)):
+        reason = (row.error or "").split(" (")[0][:200] or None
+        groups.setdefault((row.template, row.status, reason), []).append(row.url)
+    problems = sorted((UrlGroup(template=t, status=st, reason=r, count=len(urls), examples=urls[:3])
+                       for (t, st, r), urls in groups.items()), key=lambda g: -g.count)[:50]
+    return UrlsOut(by_status=by_status, by_kind=by_kind, problems=problems)

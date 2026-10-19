@@ -42,6 +42,7 @@ USERS = [("admin@e2e.test", "admin"), ("viewer@e2e.test", "viewer")]
 PASSWORD = "e2e-heslo-12345"
 PAGES = Path(__file__).parent / "fixtures" / "html" / "alter_cz"
 FEED = Path(__file__).parent / "fixtures" / "etaktik" / "heureka.xml"
+PROMETHEUS = Path(__file__).parent / "fixtures" / "html" / "prometheus"
 DISCOVERY_HOST = "objav.alter.e2e.test"
 PRICE_OVERRIDES: dict[str, str] = {}
 
@@ -58,8 +59,37 @@ class FakeShop(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def _send_bytes(self, body: bytes, content_type: str):
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _prometheus(self, url) -> bool:
+        """Saved pages of prometheus-nakl.cz under /prom/ (no sitemap, products behind query URLs)."""
+        query = parse_qs(url.query)
+        view = query.get("zobraz", [""])[0]
+        name = {"": "home.html", "katalog": "katalog.html", "id2": "id2_1.html", "id3": "id3_1.html"}.get(view)
+        if view == "detail" and url.path != "/prom/":
+            number = query.get("id_katalog", ["0"])[0]
+            if number == "306":
+                name = "detail_306.html"
+            else:  # any other detail: the saved one with a title and ISBN of its own
+                page = (PROMETHEUS / "detail_2.html").read_bytes()
+                page = page.replace("pracovní sešit 1".encode("cp1250"), f"díl {number}".encode("cp1250"))
+                page = page.replace(b"978-80-7196-310-3", f"978-80-7196-{int(number) % 1000:03d}-0".encode())
+                self._send_bytes(page, "text/html; charset=windows-1250")
+                return True
+        if name is None or url.path not in ("/prom/", "/prom/index.php", "/index.php"):
+            return False
+        self._send_bytes((PROMETHEUS / name).read_bytes(), "text/html; charset=windows-1250")
+        return True
+
     def do_GET(self):
         url = urlsplit(self.path)
+        if (url.path.startswith("/prom/") or url.path == "/index.php") and self._prometheus(url):
+            return
         if url.path == "/robots.txt":  # the sitemap is used by the product discovery test (objav.alter.e2e.test)
             return self._send(200, f"User-agent: *\nDisallow: /kosik/\nSitemap: https://{DISCOVERY_HOST}/sitemap.xml\n",
                               "text/plain")

@@ -5,7 +5,7 @@ competitor's domain and ranked by how much they look like product pages.
 """
 import json
 import re
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -16,6 +16,12 @@ PRODUCT_PATH = re.compile(r"/(produkt|product|produkty|products|p|item|detail|kn
 SKIP_PATH = re.compile(r"/(kosik|cart|basket|login|user|prihlas|registr|search|vyhledav|hladat|obchodni|kontakt|"
                        r"cdn-cgi|sites/default/files|themes|images|gallery|galerie|add_dialog)(/|$)", re.I)
 TRAILING_ID = re.compile(r"[-/]\d{2,}(\.html?)?/?$")
+# Product pages addressed by query parameters, e.g. index.php?zobraz=detail&id_katalog=306 or ?product_id=12
+PRODUCT_QUERY_KEY = re.compile(r"(produkt|product|katalog|kniha|book|item|zbozi|tovar|titul|goods|article_id)", re.I)
+PRODUCT_QUERY_VALUE = re.compile(r"^(detail|product|produkt|kniha|zbozi|tovar|item|book|titul)$", re.I)
+# Search, ordering forms, printing and shopping cart actions are never products or listings.
+SKIP_QUERY = re.compile(r"^(hledany_text|hledat|search|q|query|s|keyword|addtocart|add-to-cart|kosik|cart|"
+                        r"objednavka|tisk|print|login|logout)$", re.I)
 
 
 GENERIC_TEXT = re.compile(r"^(více|viac|detail|detaily|zobrazit|zobraziť|more|read more|kúpiť|koupit|do košíka|"
@@ -38,9 +44,21 @@ def _card_title(anchor) -> str:
     return ""
 
 
-def _score(path: str) -> int:
+def query_says_product(query: str) -> bool:
+    """A numeric product-like key (id_katalog=306, product_id=5), or a value naming the detail (zobraz=detail)."""
+    pairs = parse_qsl(query, keep_blank_values=True)
+    numeric_key = any(PRODUCT_QUERY_KEY.search(k) and v.isdigit() for k, v in pairs)
+    detail_value = any(PRODUCT_QUERY_VALUE.match(v) for _, v in pairs) and any(v.isdigit() for _, v in pairs)
+    return numeric_key or detail_value
+
+
+def skipped_query(query: str) -> bool:
+    return any(SKIP_QUERY.match(k) for k, _ in parse_qsl(query, keep_blank_values=True))
+
+
+def _score(path: str, query: str = "") -> int:
     score = 0
-    if PRODUCT_PATH.search(path):
+    if PRODUCT_PATH.search(path) or (query and query_says_product(query)):
         score += 2
     if TRAILING_ID.search(path) or path.endswith((".html", ".htm")):
         score += 1
@@ -63,10 +81,13 @@ def discover_links(html: str, page_url: str, domain: str, tracked: set[str]) -> 
             url = normalize_url(urljoin(page_url, raw))
         except InvalidUrl:
             return
-        path = urlsplit(url).path
+        parts = urlsplit(url)
+        path = parts.path
         if not _belongs(url, domain) or SKIP_PATH.search(path) or url.rstrip("/") == page_url.rstrip("/"):
             return
-        score = _score(path)
+        if skipped_query(parts.query):
+            return
+        score = _score(path, parts.query)
         if score == 0:
             return
         text = " ".join(text.split())[:200]

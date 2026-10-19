@@ -220,8 +220,11 @@ def test_structured_data_parsers():
     o = parse("opengraph", "generic/opengraph_product.html")
     assert (o.price, o.currency, o.availability) == (Decimal("7.20"), "EUR", "preorder")
     assert parse("auto", "generic/microdata_product.html").source == "microdata"
+    # Without structured data the text of the page is read (the same result as the alter.cz parser).
+    page = parse("auto", "alter_cz/produkt_1111.html")
+    assert (page.price, page.source) == (Decimal("44.00"), "heuristic")
     with pytest.raises(ParseError, match="Nastavte CSS selektory"):
-        parse("auto", "alter_cz/produkt_1111.html")
+        parse("auto", "alter_cz/home.html")
 
 
 def test_parser_config_validation():
