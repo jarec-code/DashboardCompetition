@@ -95,9 +95,13 @@ def put_discovery(competitor_id: int, data: DiscoverySettingsIn, db: DbSession, 
     settings.max_pages, settings.max_depth, settings.max_run_days = data.max_pages, data.max_depth, data.max_run_days
     if data.recipe is not None:
         new = data.recipe.model_dump()
-        if new != {k: getattr(settings, k) for k in discovery.RECIPE_FIELDS}:
-            for key, value in new.items():
-                setattr(settings, key, value)
+        redetect = any(new[k] != getattr(settings, k) for k in discovery.REDETECT_FIELDS)
+        for key, value in new.items():
+            setattr(settings, key, value)
+        if settings.diagnosis.get("suggestions"):  # suggestions of a domain now ignored disappear
+            settings.diagnosis = {**settings.diagnosis, "suggestions": [
+                t for t in settings.diagnosis["suggestions"] if not discovery.is_ignored(t, settings.ignored_domains)]}
+        if redetect:
             data.redetect = True  # a changed recipe: the methods are found and judged anew
     if data.source is not None:
         settings.source = data.source.model_copy(update={"detected": False})

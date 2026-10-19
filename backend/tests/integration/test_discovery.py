@@ -590,3 +590,36 @@ def test_queued_pages_of_a_type_without_products_are_skipped(db):
     run = run_all(db, site)
     order_reads = [r for r in site.requests if r.startswith("/index.php?cast=1")]
     assert len(order_reads) == 5 and run.stats["found"] == 5  # after five such pages the rest is skipped
+
+
+def test_ignored_domain_is_never_suggested_nor_read_and_does_not_restart_detection(client, db):
+    from tests.conftest import login, make_user
+
+    make_user("admin@example.com")
+    login(client, "admin@example.com")
+    c = competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz")
+    interactive = "".join(f'<a href="https://flexi.example.cz/kniha/{n}">E-kniha {n}</a>' for n in range(1, 13))
+    site = bookshop([100 + n for n in range(6)], home_extra=interactive)
+    site.pages["/"] = (200, site.pages["/"][1])
+    db.refresh(c.scrape_config)
+    c.base_url = "https://knihy.example.cz/"
+    c.domain = "knihy.example.cz"
+    db.commit()
+    run_all(db, site)
+    url = f"/api/competitors/{c.id}/discovery"
+    state = client.get(url).json()["settings"]
+    assert "flexi.example.cz" in state["diagnosis"]["suggestions"][0]
+
+    body = {"mode": "shadow", "terms_confirmed": True}
+    assert client.put(url, json={**body, "recipe": {"extra_domains": ["flexi.example.cz"],
+                                                     "ignored_domains": ["flexi.example.cz"]}}).status_code == 422
+    after = client.put(url, json={**body, "recipe": {"ignored_domains": ["flexi.example.cz"]}}).json()["settings"]
+    assert after["ignored_domains"] == ["flexi.example.cz"] and after["diagnosis"]["suggestions"] == []
+    assert after["diagnosis"]["chosen"] == ["crawl"] and after["source"] is not None  # not detected anew
+
+    db.expire_all()  # the API changed the settings in another session
+    discovery.save(c.scrape_config, discovery.load(c.scrape_config).model_copy(update={"diagnosis": {}}))
+    db.commit()
+    request_again(db, c)
+    run = run_all(db, site)
+    assert not run.stats.get("suggestions")  # detected anew: the ignored domain is not suggested again

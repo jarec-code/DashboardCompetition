@@ -29,7 +29,7 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.orm import Session
 
@@ -138,6 +138,7 @@ class DiscoverySettings(BaseModel):
     feed_url: str | None = Field(default=None, max_length=2048)
     entry_urls: list[str] = Field(default_factory=list, max_length=20)    # where the crawler starts
     extra_domains: list[str] = Field(default_factory=list, max_length=10)  # e.g. a shop on another domain
+    ignored_domains: list[str] = Field(default_factory=list, max_length=20)  # never read nor suggested
     include_patterns: list[str] = Field(default_factory=list, max_length=20)  # regex: only these URLs
     exclude_patterns: list[str] = Field(default_factory=list, max_length=20)  # regex: never these URLs
     product_pattern: str | None = Field(default=None, max_length=300)       # regex: product pages
@@ -172,6 +173,7 @@ class Recipe(BaseModel):
     feed_url: str | None = Field(default=None, max_length=2048)
     entry_urls: list[str] = Field(default_factory=list, max_length=20)
     extra_domains: list[str] = Field(default_factory=list, max_length=10)
+    ignored_domains: list[str] = Field(default_factory=list, max_length=20)
     include_patterns: list[str] = Field(default_factory=list, max_length=20)
     exclude_patterns: list[str] = Field(default_factory=list, max_length=20)
     product_pattern: str | None = Field(default=None, max_length=300)
@@ -195,7 +197,7 @@ class Recipe(BaseModel):
         except InvalidUrl as exc:
             raise ValueError(str(exc)) from None
 
-    @field_validator("extra_domains")
+    @field_validator("extra_domains", "ignored_domains")
     @classmethod
     def domains(cls, values: list[str]) -> list[str]:
         result = []
@@ -221,8 +223,21 @@ class Recipe(BaseModel):
     def params(cls, values: list[str]) -> list[str]:
         return [v.strip().lower() for v in values if v.strip()]
 
+    @model_validator(mode="after")
+    def no_conflict(self) -> "Recipe":
+        both = set(self.extra_domains) & set(self.ignored_domains)
+        if both:
+            raise ValueError(f"Doména nemôže byť naraz ďalšia aj nepoužívaná: {', '.join(sorted(both))}")
+        return self
+
 
 RECIPE_FIELDS = tuple(Recipe.model_fields)
+# Changing these finds and judges the methods anew; ignoring a domain does not (a running run goes on).
+REDETECT_FIELDS = tuple(f for f in RECIPE_FIELDS if f != "ignored_domains")
+
+
+def is_ignored(text: str, ignored: list[str]) -> bool:
+    return any(d in text.lower() for d in ignored)
 
 
 def load(config: ScrapeConfig) -> DiscoverySettings:
@@ -656,7 +671,7 @@ class Runner:
         self._set_stats(detect=state)
         self._attempt("domovská stránka", f"{len(links)} produktových odkazov, katalóg: "
                                           f"{', '.join(state['candidates']) or 'nenájdený'}")
-        shop = _shop_domain_hint(text, response.url, self._domains())
+        shop = _shop_domain_hint(text, response.url, self._domains() | set(self.settings.ignored_domains))
         if shop:
             self._set_stats(suggestions=[f"Domovská stránka má {shop[1]} odkazov na doménu {shop[0]}. Ak je tam obchod "
                                          "konkurenta, pridajte ju v recepte medzi ďalšie domény a ako vstupnú stránku "
@@ -665,7 +680,8 @@ class Runner:
     # ----- C: the guided crawler (source "crawl") -----
 
     def _domains(self) -> set[str]:
-        return {self.competitor.domain, *(d.lower().removeprefix("www.") for d in self.settings.extra_domains)}
+        domains = {self.competitor.domain, *(d.lower().removeprefix("www.") for d in self.settings.extra_domains)}
+        return domains - set(self.settings.ignored_domains)
 
     def _drop(self) -> set[str]:
         return set(self.settings.drop_params)
@@ -1142,7 +1158,8 @@ class Runner:
             "at": self.now.isoformat() if detected_now else previous["at"], "chosen": chosen, "plan": plan,
             "sources": self.run.stats.get("sources") or previous.get("sources") or {},
             "methods": {**(previous.get("methods") or {}), **methods},
-            "suggestions": self.run.stats.get("suggestions") or previous.get("suggestions") or [],
+            "suggestions": [t for t in self.run.stats.get("suggestions") or previous.get("suggestions") or []
+                            if not is_ignored(t, self.settings.ignored_domains)],
             "quality": final, "stale": not final["sufficient"],
         }
 

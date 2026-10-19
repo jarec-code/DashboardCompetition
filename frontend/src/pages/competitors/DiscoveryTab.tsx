@@ -44,14 +44,16 @@ const split = (text: string, sep: RegExp) => text.split(sep).map((v) => v.trim()
 
 function recipeForm(s: DiscoveryState["settings"]) {
   return { strategy: s.strategy ?? "auto", feed_url: s.feed_url ?? "", entry_urls: lines(s.entry_urls ?? []),
-           extra_domains: (s.extra_domains ?? []).join(", "), include_patterns: lines(s.include_patterns ?? []),
+           extra_domains: (s.extra_domains ?? []).join(", "), ignored_domains: (s.ignored_domains ?? []).join(", "),
+           include_patterns: lines(s.include_patterns ?? []),
            exclude_patterns: lines(s.exclude_patterns ?? []), product_pattern: s.product_pattern ?? "",
            drop_params: (s.drop_params ?? []).join(", ") };
 }
 
 function recipeValue(f: ReturnType<typeof recipeForm>): Recipe {
   return { strategy: f.strategy, feed_url: f.feed_url.trim() || null, entry_urls: split(f.entry_urls, /\n/),
-           extra_domains: split(f.extra_domains, /[,\s]+/), include_patterns: split(f.include_patterns, /\n/),
+           extra_domains: split(f.extra_domains, /[,\s]+/), ignored_domains: split(f.ignored_domains, /[,\s]+/),
+           include_patterns: split(f.include_patterns, /\n/),
            exclude_patterns: split(f.exclude_patterns, /\n/), product_pattern: f.product_pattern.trim() || null,
            drop_params: split(f.drop_params, /[,\s]+/) };
 }
@@ -189,8 +191,12 @@ function SettingsCard({ competitorId, state, readOnly }: { competitorId: number;
                 <TextInput label="Adresa produktového feedu (Heureka, Google)" placeholder="https://…" {...r("feed_url")} />
                 <Textarea label="Vstupné stránky na prechádzanie (jedna na riadok)" autosize minRows={2} {...r("entry_urls")}
                           placeholder="https://www.example.cz/katalog" />
-                <TextInput label="Ďalšie domény (čiarkou)" placeholder="naseucebnice.cz" {...r("extra_domains")}
-                           description="napr. obchod konkurenta na inej doméne" />
+                <SimpleGrid cols={{ base: 1, sm: 2 }}>
+                  <TextInput label="Ďalšie domény (čiarkou)" placeholder="naseucebnice.cz" {...r("extra_domains")}
+                             description="napr. obchod konkurenta na inej doméne" />
+                  <TextInput label="Nepoužívať domény (čiarkou)" placeholder="flexibooks.cz" {...r("ignored_domains")}
+                             description="nikdy sa nečítajú ani nenavrhujú" />
+                </SimpleGrid>
                 <SimpleGrid cols={{ base: 1, sm: 2 }}>
                   <Textarea label="Prechádzať iba adresy (regulárne výrazy, jeden na riadok)" autosize minRows={2}
                             placeholder="^/katalog" {...r("include_patterns")} />

@@ -25,6 +25,7 @@ export interface DiscoverySettings {
   feed_url: string | null;
   entry_urls: string[];
   extra_domains: string[];
+  ignored_domains: string[];
   include_patterns: string[];
   exclude_patterns: string[];
   product_pattern: string | null;
@@ -62,6 +63,7 @@ export interface Recipe {
   feed_url: string | null;
   entry_urls: string[];
   extra_domains: string[];
+  ignored_domains: string[];
   include_patterns: string[];
   exclude_patterns: string[];
   product_pattern: string | null;
