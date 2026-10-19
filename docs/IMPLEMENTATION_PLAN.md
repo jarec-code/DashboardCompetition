@@ -509,7 +509,7 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 - **Testy:** backend 335 passed (vrátane testov na reálnych vzorkách feedu, Google CSV a priloženého exportu,
   opakovaných behov a konfliktov), Vitest 4, e2e 29 (nový test synchronizácie s falošným feedom).
 - **Skúška na reálnych dátach (lokálne):** 1 237 produktov, 0 duplicít, druhý beh bez zmien.
-- **Potrebné:** načítať katalóg v produkcii podľa ETAKTIK_IMPORT.md (zápis robí administrátor v aplikácii).
+- **Produkcia (19. 10. 2026):** feed synchronizovaný (1 224 nových, 5 aktualizovaných), priložené CSV importované (8 nových, 732 aktualizovaných, 75 odmietnutých); spolu 1 237 produktov, automatická synchronizácia zapnutá.
 
 ---
 

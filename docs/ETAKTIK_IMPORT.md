@@ -53,9 +53,18 @@ Simulácia s 5 produktmi, ktoré sú teraz v produkcii (zadané ručne, iba náz
 názvu a rovnakej ceny a doplní sa im interné ID, ISBN, URL, obrázok a kategória. ID produktu ostáva, takže ponuka
 z alter.cz a jej história ostanú priradené.
 
-## Načítanie v produkcii
+## Načítanie v produkcii ✅ 19. 10. 2026
 
-V produkcii ešte nie je načítané (zápis robí administrátor v aplikácii):
+| Krok | Spracované | Nové | Aktualizované | Bez zmeny | Na kontrolu | Odmietnuté |
+|---|---|---|---|---|---|---|
+| Synchronizácia feedu (worker, 22 s od požiadavky) | 1 229 | 1 224 | 5 (pôvodné ručne zadané produkty) | 0 | 0 | 0 |
+| Priložené CSV | 820 | 8 | 732 | 5 | 0 | 75 |
+
+Spolu **1 237 produktov**. Pôvodný produkt #4 (Hravá prvouka 1 – metodická příručka, rev. RVP ZV) si ponechal ID,
+dostal interné ID 3965, ISBN, URL a parametre; ponuka z alter.cz a upozornenie „Konkurent je lacnejší o 65,6 %“
+ostali. Automatická synchronizácia je zapnutá (raz za 24 h). Google CSV (krok 3) zatiaľ nebolo importované.
+
+Postup pre opätovné načítanie (zápis robí administrátor v aplikácii):
 1. Nastavenia → Vlastné produkty z feedu e-shopu: adresa `https://www.etaktik.cz/export/heureka.php`, trh CZ,
    interval 24 h, zapnúť „Automaticky podľa intervalu“, Uložiť, **Synchronizovať teraz**.
 2. Produkty → Import: `EXPORT_PRODUCTS_1792395535.csv`, trh CZ → skontrolovať náhľad → Uložiť (doplní parametre
