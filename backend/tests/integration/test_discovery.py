@@ -21,7 +21,9 @@ from app.models import (
     ScrapeConfig,
     ScrapeRun,
 )
+from app.scraping import crawl
 from app.scraping.fetcher import Fetcher
+from app.scraping.urlnorm import template
 from app.services import discovery, scheduling
 from app.worker.scheduler import due_offers_query
 
@@ -679,6 +681,29 @@ def test_boilerplate_items_already_in_the_catalogue_are_cleaned_up(db):
     run_all(db, prometheus_site(), limit=1000)
     left = db.scalars(select(CatalogItem).where(CatalogItem.title == "JAK OBJEDNÁVAT")).all()
     assert left and all(i.match_status == "unrelated" and i.fetch_status == "not_product" for i in left)
+
+
+def test_page_type_dropped_earlier_is_not_followed_by_a_running_crawl(db):
+    c = competitor(db, "Prometheus", "https://prometheus-nakl.cz/", "prometheus-nakl.cz")
+    tpl = template("https://prometheus-nakl.cz/index.php?cast=1&id_katalog=1")
+    for n in range(1, 4):  # dropped by an older version: marked in the catalogue, the page type not marked
+        db.add(CatalogItem(competitor_id=c.id, key=f"https://prometheus-nakl.cz/index.php?cast=1&id_katalog={n}",
+                           url=f"https://prometheus-nakl.cz/index.php?cast=1&id_katalog={n}", title="JAK OBJEDNÁVAT",
+                           price=Decimal("500"), currency="CZK", match_status="unrelated", status="active",
+                           found_by="crawl", fetch_status="not_product", enriched_at=datetime.now(UTC),
+                           enrich_error=f"{discovery.BOILERPLATE_NOTE} 3 stránkach tohto typu (napr. návod).",
+                           identifiers={}, hints={}, attributes={}, candidates=[], missing_runs=0,
+                           price_from_listing=False))
+    db.commit()
+    assert discovery.clean_all(db) == {"duplicates": 0, "boilerplate": 0}
+    db.expire_all()
+    learned = settings_of(db, c).learned_templates
+    assert learned[tpl]["not_products"] == 1
+    running = {tpl: {"pages": 48, "products": 48, "listings": 0}}  # what the running crawl had counted
+    stats = crawl.merged(learned, running)
+    assert stats[tpl]["products"] == 0 and crawl.dead(tpl, stats)
+    assert not crawl.product_like("https://prometheus-nakl.cz/index.php?cast=1&id_katalog=99", stats)
+    assert crawl.merged(stats)[tpl]["not_products"] == 1  # kept when the run's statistics are learned
 
 
 def test_tabs_of_one_product_are_one_product_and_unread_addresses_are_not_listed(client, db):

@@ -53,12 +53,20 @@ def page_links(html: str, page_url: str, domains: set[str], drop_params: set[str
 
 
 def merged(*stats: dict[str, dict[str, int]]) -> dict[str, dict[str, int]]:
+    """Sum of template statistics. A template found not to be products ("not_products", e.g. a "how to
+    order" page repeated for every product) stays so, whatever a running crawl counted before."""
     total: dict[str, dict[str, int]] = {}
+    blocked: set[str] = set()
     for part in stats:
         for tpl, values in (part or {}).items():
             row = total.setdefault(tpl, {"pages": 0, "products": 0, "listings": 0})
             for key in row:
                 row[key] += values.get(key, 0)
+            if values.get("not_products"):
+                blocked.add(tpl)
+    for tpl in blocked:
+        total[tpl] = {**total[tpl], "products": 0, "not_products": 1,
+                      "pages": max(total[tpl]["pages"], DEAD_AFTER_PAGES)}
     return total
 
 

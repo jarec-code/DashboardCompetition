@@ -66,6 +66,7 @@ SUSPICIOUS_DROP = 0.5            # fewer than half of last run's products: stop 
 DIAGNOSIS_DAYS = 30              # the chosen methods are tried anew after this
 CLEANUP_EVERY = 20               # requests between corrections of duplicates and boilerplate in a long run
 BOILERPLATE_PAGES = 3            # the same title and price on this many pages of one type: not products
+BOILERPLATE_NOTE = "Nie je produkt: rovnaký názov a cena na"
 FORBIDDEN_TO_STOP = 3            # HTTP 403 on this many different pages in a row: the website blocks us
 ENRICH_WINDOW = 500              # items considered when choosing the next product page to read
 EARLY_SAMPLE = 15                # pages of a sitemap read before it is judged (no product: next method)
@@ -1074,7 +1075,7 @@ class Runner:
         for item in same:
             item.match_status, item.match_method, item.product_id = "unrelated", None, None
             item.fetch_status = "not_product"
-            item.enrich_error = (f"Nie je produkt: rovnaký názov a cena na {len(same) + 1} stránkach tohto typu "
+            item.enrich_error = (f"{BOILERPLATE_NOTE} {len(same) + 1} stránkach tohto typu "
                                  "(napr. návod na objednávanie).")
         self._stat("boilerplate", len(same) + 1)
         _forget_template(self.db, self.competitor, self.settings, template(url))
@@ -1429,9 +1430,9 @@ def _dedupe(db: Session, competitor_id: int) -> int:
 def _forget_template(db: Session, competitor: Competitor, settings: DiscoverySettings, tpl: str) -> None:
     """A page type believed to be products is not: no product count, so it is not followed any more."""
     learned = {k: dict(v) for k, v in settings.learned_templates.items()}
-    learned[tpl] = {**learned.get(tpl, {"listings": 0}), "products": 0,
+    learned[tpl] = {**learned.get(tpl, {"listings": 0}), "products": 0, "not_products": 1,
                     "pages": max(learned.get(tpl, {}).get("pages", 0), crawl.DEAD_AFTER_PAGES)}
-    settings.learned_templates = learned
+    settings.learned_templates = learned  # "not_products" also overrides the counts of a running crawl
     db.execute(update(DiscoveryUrl).where(
         DiscoveryUrl.competitor_id == competitor.id, DiscoveryUrl.template == tpl[:600],
         DiscoveryUrl.kind == "product").values(kind="info"))
@@ -1453,11 +1454,20 @@ def clean_catalog(db: Session, competitor: Competitor, settings: DiscoverySettin
         if len(items) < BOILERPLATE_PAGES:
             continue
         for item in items:
-            _not_product(item, f"Nie je produkt: rovnaký názov a cena na {len(items)} stránkach tohto typu "
+            _not_product(item, f"{BOILERPLATE_NOTE} {len(items)} stránkach tohto typu "
                                "(napr. návod na objednávanie).")
             boilerplate += 1
         _forget_template(db, competitor, settings, tpl)
         templates.append(tpl)
+    # Page types dropped before (e.g. by an older version) that are not marked yet: a running crawl would
+    # otherwise still count them as products.
+    for url in db.scalars(select(CatalogItem.url).where(
+            CatalogItem.competitor_id == competitor.id, CatalogItem.fetch_status == "not_product",
+            CatalogItem.enrich_error.like(f"{BOILERPLATE_NOTE}%"))):
+        tpl = template(url)
+        if tpl not in templates and not settings.learned_templates.get(tpl, {}).get("not_products"):
+            _forget_template(db, competitor, settings, tpl)
+            templates.append(tpl)
     return {"duplicates": duplicates, "boilerplate": boilerplate, "templates": templates}
 
 
