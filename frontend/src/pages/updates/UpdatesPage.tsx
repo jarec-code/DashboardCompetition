@@ -55,6 +55,32 @@ function StatusCards({ m }: { m: Monitoring }) {
   );
 }
 
+function DiscoveryOverview({ m }: { m: Monitoring }) {
+  if (!m.discovery.length) return null;
+  return (
+    <Paper withBorder p="md" radius="md">
+      <Title order={2} size="h4" mb="xs">Objavovanie produktov konkurentov</Title>
+      <List size="sm" spacing={4}>
+        {m.discovery.map((d) => {
+          const paused = d.paused_until && new Date(d.paused_until) > new Date();
+          return (
+            <List.Item key={d.competitor_id}>
+              <Anchor component={Link} to={`/konkurencia/${d.competitor_id}`}>{d.competitor_name}</Anchor>:{" "}
+              {d.mode === "auto" ? "automatický režim" : "tieňový režim"}
+              {d.running ? " · beh prebieha" : ` · posledný beh ${formatDateTime(d.last_run_at)}`}
+              {!paused && d.next_run_at ? ` · ďalší ${formatDateTime(d.next_run_at)}` : ""}
+              {` · automaticky sledované ${d.tracked_auto}`}
+              {d.review > 0 && <Badge ml="xs" size="sm" variant="light" color="orange">na kontrolu: {d.review}</Badge>}
+              {paused && <Badge ml="xs" size="sm" variant="light" color="red">pozastavené do {formatDateTime(d.paused_until)}</Badge>}
+              {d.last_error && <Text size="xs" c="orange">{d.last_error}</Text>}
+            </List.Item>
+          );
+        })}
+      </List>
+    </Paper>
+  );
+}
+
 function Problems({ m }: { m: Monitoring }) {
   if (!m.problem_competitors.length && !m.problem_offers.length) return null;
   return (
@@ -160,6 +186,7 @@ export function UpdatesPage() {
         <>
           <StatusCards m={monitoring.data} />
           <Problems m={monitoring.data} />
+          <DiscoveryOverview m={monitoring.data} />
         </>
       )}
       <Paper withBorder radius="md">

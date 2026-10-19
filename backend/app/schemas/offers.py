@@ -57,6 +57,7 @@ class OfferOut(BaseModel):
     matching_method: str | None
     match_status: str
     match_score: Decimal | None
+    price_source: str = "page"
     status: str
     custom_frequency_hours: int | None
     next_check_at: datetime | None

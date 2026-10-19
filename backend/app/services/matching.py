@@ -1,7 +1,8 @@
 """Matching of competitor offers to our products, without AI.
 
 Order: 1. exact ISBN/EAN (GTIN) or SKU, 2. normalized name similarity, 3. manual choice by a user.
-Manual decisions (assigned or ignored) are never overwritten by the automatic matching. Ambiguous
+Manual decisions (assigned or ignored) and matches made by product discovery ("attributes") are never
+overwritten by the automatic matching. Ambiguous
 results are not assigned; they wait in the review queue with candidates.
 """
 import re
@@ -101,8 +102,8 @@ def auto_match(db: Session, offer: CompetitorProduct) -> None:
     Leaves manual decisions untouched. Exactly one identifier match, or one clear name match
     (>= AUTO_MATCH_SCORE and ahead of the runner-up), is assigned; anything else goes to review.
     """
-    if offer.matching_method == "manual" or offer.match_status == "ignored":
-        return
+    if offer.matching_method in ("manual", "attributes") or offer.match_status == "ignored":
+        return  # decided by a person, or by discovery (comparable product, see app.services.comparable)
     current = db.scalar(select(CurrentPrice).where(CurrentPrice.competitor_product_id == offer.id))
     title = current.title if current else None
     identifiers = current.found_identifiers if current else None

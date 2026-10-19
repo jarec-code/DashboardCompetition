@@ -14,7 +14,8 @@ PRIORITIES = ("strategic", "regular", "stable")
 TRACKING_STATUSES = ("active", "paused")
 OFFER_STATUSES = ("active", "paused", "archived")
 MATCH_STATUSES = ("matched", "pending_review", "unmatched", "ignored")
-MATCHING_METHODS = ("identifier", "name", "manual", "ai")
+MATCHING_METHODS = ("identifier", "name", "manual", "ai", "attributes")  # attributes: discovery
+PRICE_SOURCES = ("page", "listing")
 # Where the product data came from, by trust: a feed of our own e-shop beats an uploaded file, which beats
 # data entered by hand before any import (NULL). Imports overwrite filled fields only from an equal or better source.
 SOURCE_KINDS = ("file", "feed")
@@ -89,6 +90,7 @@ class CompetitorProduct(TimestampMixin, Base):
         one_of("status", OFFER_STATUSES, "ck_competitor_products_status"),
         one_of("match_status", MATCH_STATUSES, "ck_competitor_products_match_status"),
         one_of("matching_method", MATCHING_METHODS, "ck_competitor_products_matching_method"),
+        one_of("price_source", PRICE_SOURCES, "ck_competitor_products_price_source"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -103,3 +105,5 @@ class CompetitorProduct(TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default="active")
     custom_frequency_hours: Mapped[int | None] = mapped_column(Integer)
     next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # "listing": the price is read from the competitor's product listing by discovery runs (no product page).
+    price_source: Mapped[str] = mapped_column(String(16), default="page", server_default="page")

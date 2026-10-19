@@ -70,6 +70,9 @@ def check_offer(offer_id: int, db: DbSession, _admin: AdminUser) -> ScrapeJob:
     competitor = db.get(Competitor, offer.competitor_id)
     if competitor.status == "archived" or offer.status == "archived":
         raise HTTPException(status.HTTP_409_CONFLICT, "Archivovanú ponuku ani konkurenta nemožno kontrolovať.")
+    if offer.price_source == "listing":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Cena tejto ponuky sa číta zo zoznamu produktov konkurenta "
+                                                      "pri dennom prechode; samostatne sa nekontroluje.")
     job = queue.enqueue(db, competitor.id, "manual", offer_id=offer.id)
     db.commit()
     return job

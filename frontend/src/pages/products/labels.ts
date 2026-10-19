@@ -19,6 +19,7 @@ export const METHOD_LABELS: Record<string, string> = {
   name: "podľa názvu",
   manual: "ručne",
   ai: "AI",
+  attributes: "automaticky (porovnateľný titul)",
 };
 
 export const AVAILABILITY_LABELS: Record<string, { label: string; color: string }> = {

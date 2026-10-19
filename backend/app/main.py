@@ -13,6 +13,7 @@ from app.api import (
     catalog,
     comparison,
     competitors,
+    discovery,
     history,
     imports,
     jobs,
@@ -87,6 +88,7 @@ api.include_router(history.router)
 api.include_router(alerts.router)
 api.include_router(imports.router)
 api.include_router(catalog.router)
+api.include_router(discovery.router)
 app.include_router(auth.router, prefix="/api")  # login works without a CSRF token; others check it
 app.include_router(api)
 

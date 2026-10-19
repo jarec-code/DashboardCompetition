@@ -8,9 +8,9 @@ from sqlalchemy import func, select
 
 from app.api.deps import AdminUser, CurrentUser, DbSession
 from app.config import get_settings
-from app.models import Competitor, CompetitorProduct, CurrentPrice, ScrapeJob, ScrapeRun
+from app.models import CatalogItem, Competitor, CompetitorProduct, CurrentPrice, DiscoveryRun, ScrapeJob, ScrapeRun
 from app.schemas.common import Page
-from app.services import scheduling
+from app.services import discovery, scheduling
 from app.worker.scheduler import due_offers_query
 
 router = APIRouter(tags=["monitoring"])
@@ -65,6 +65,20 @@ class OfferProblem(BaseModel):
     last_success_at: datetime | None
 
 
+class DiscoveryState(BaseModel):
+    competitor_id: int
+    competitor_name: str
+    mode: str
+    running: bool
+    last_run_status: str | None
+    last_run_at: datetime | None
+    next_run_at: datetime | None
+    paused_until: datetime | None
+    last_error: str | None
+    review: int
+    tracked_auto: int
+
+
 class MonitoringOut(BaseModel):
     now: datetime
     timezone: str
@@ -81,6 +95,30 @@ class MonitoringOut(BaseModel):
     price_changes_24h: int
     problem_competitors: list[CompetitorProblem]
     problem_offers: list[OfferProblem]
+    discovery: list[DiscoveryState] = []
+
+
+def _discovery_states(db) -> list[DiscoveryState]:
+    states = []
+    for competitor in db.scalars(select(Competitor).where(Competitor.status != "archived").order_by(Competitor.name)):
+        settings = discovery.load(competitor.scrape_config) if competitor.scrape_config else None
+        if settings is None or settings.mode == "off":
+            continue
+        last = db.scalar(select(DiscoveryRun).where(DiscoveryRun.competitor_id == competitor.id,
+                                                    DiscoveryRun.kind == "discovery")
+                         .order_by(DiscoveryRun.id.desc()))
+        review = db.scalar(select(func.count(CatalogItem.id)).where(
+            CatalogItem.competitor_id == competitor.id, CatalogItem.status == "active",
+            CatalogItem.match_status == "review"))
+        tracked = db.scalar(select(func.count(CompetitorProduct.id)).where(
+            CompetitorProduct.competitor_id == competitor.id, CompetitorProduct.status == "active",
+            CompetitorProduct.matching_method.in_(("attributes", "identifier"))))
+        states.append(DiscoveryState(
+            competitor_id=competitor.id, competitor_name=competitor.name, mode=settings.mode,
+            running=bool(last and last.status == "running"), last_run_status=last.status if last else None,
+            last_run_at=(last.finished_at or last.started_at) if last else None, next_run_at=settings.next_run_at,
+            paused_until=settings.paused_until, last_error=settings.last_error, review=review, tracked_auto=tracked))
+    return states
 
 
 def _competitor_problems(db) -> list[CompetitorProblem]:
@@ -135,6 +173,7 @@ def monitoring(db: DbSession, _user: CurrentUser) -> MonitoringOut:
                                      product_url=o.product_url, consecutive_failures=c.consecutive_failures,
                                      last_error=c.last_error, last_success_at=c.last_success_at)
                         for o, name, c in offer_rows],
+        discovery=_discovery_states(db),
     )
 
 

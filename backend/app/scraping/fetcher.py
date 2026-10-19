@@ -121,7 +121,27 @@ class Fetcher:
         if cached is None or cached[0] < time.monotonic():
             self._robots[origin] = (time.monotonic() + self.settings.robots_cache_seconds, self._load_robots(origin))
         parser = self._robots[origin][1]
-        return parser is None or parser.can_fetch(self.settings.scraper_user_agent.split("/")[0], url)
+        return parser is None or parser.can_fetch(self._agent, url)
+
+    @property
+    def _agent(self) -> str:
+        return self.settings.scraper_user_agent.split("/")[0]
+
+    def _robots_parser(self, url: str) -> urllib.robotparser.RobotFileParser | None:
+        self.robots_allowed(url)  # loads (and caches) robots.txt of the origin
+        parts = urlsplit(url)
+        return self._robots[f"{parts.scheme}://{parts.netloc}"][1]
+
+    def crawl_delay(self, url: str) -> float | None:
+        """Crawl-delay for our user agent from robots.txt (None when not set)."""
+        parser = self._robots_parser(url)
+        delay = parser.crawl_delay(self._agent) if parser is not None else None
+        return float(delay) if delay is not None else None
+
+    def sitemaps(self, url: str) -> list[str]:
+        """Sitemap URLs announced in robots.txt."""
+        parser = self._robots_parser(url)
+        return list(parser.site_maps() or []) if parser is not None else []
 
     # ---------- internals ----------
 

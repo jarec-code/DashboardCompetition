@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.scraping.fetcher import Fetcher
-from app.services import alerts, catalog_sync, housekeeping, scheduling
+from app.services import alerts, catalog_sync, discovery, housekeeping, scheduling
 from app.worker import queue, scheduler
 from app.worker.processor import Processor
 
@@ -30,6 +30,7 @@ class Worker:
         self.settings = settings or get_settings()
         self.fetcher = fetcher or Fetcher(self.settings)
         self.processor = Processor(self.fetcher)
+        self.politeness = discovery.Politeness(self.processor._last_request, self.processor._blocked_until)
         self._last_recovery = 0.0
         self._last_tick = 0.0
         self._last_alerts = 0.0
@@ -62,12 +63,14 @@ class Worker:
                     time.monotonic() - self._last_tick > self.settings.scheduler_interval_seconds:
                 self._last_tick = time.monotonic()
                 scheduler.tick(db)
+            # Product discovery: at most one request per loop, between price checks (shared spacing per domain).
+            discovered = discovery.step(db, self.fetcher, self.politeness)
             jobs = queue.claim(db, limit=1)
             for job in jobs:
                 self.processor.process(db, job)
                 db.commit()
                 log.info("Job %s (%s) finished: %s", job.id, job.kind, job.status)
-            return len(jobs)
+            return len(jobs) + int(discovered)
 
     def run_until(self, stop: threading.Event) -> None:
         log.info("Worker started")

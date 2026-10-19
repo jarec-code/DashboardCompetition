@@ -39,6 +39,7 @@ def due_offers_query(now: datetime):
             .join(ScrapeConfig, ScrapeConfig.competitor_id == Competitor.id)
             .outerjoin(Product, Product.id == CompetitorProduct.product_id)
             .where(CompetitorProduct.status == "active", Competitor.status == "active", ScrapeConfig.enabled.is_(True),
+                   CompetitorProduct.price_source == "page",  # listing prices come from discovery runs
                    or_(Product.id.is_(None), Product.tracking_status == "active"),
                    or_(CompetitorProduct.next_check_at.is_(None), CompetitorProduct.next_check_at <= now),
                    ~open_job))

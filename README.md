@@ -100,7 +100,7 @@ Vzor je v [.env.example](.env.example); skutočné heslá nikdy nepatria do repo
   skontrolujte (Alembic nezachytí zmeny CHECK obmedzení ani dáta).
 - Migrácie: `0001` jadro schémy, `0002` unikátne identifikátory, `0003` plánovanie a monitoring, `0004`
   upozornenia s predvolenými pravidlami, `0005` importy, `0006` verzia relácie, `0007` URL, obrázok, dostupnosť
-  a zdroj údajov vlastného produktu, `0008` príznak balíčka.
+  a zdroj údajov vlastného produktu, `0008` príznak balíčka, `0009` objavovanie produktov konkurentov.
 
 ## Práca s aplikáciou
 
@@ -115,6 +115,13 @@ podmienky používania; aplikácia rešpektuje robots.txt a nikdy neobchádza oc
 **Sledované produkty konkurenta.** Detail konkurenta → Sledované produkty → Pridať URL (vložiť zoznam URL alebo
 vybrať odkazy zo stránky kategórie) alebo Import zo súboru. Ponuky priradíte k vlastným produktom tlačidlom
 s reťazou; zhoda ISBN/EAN/SKU sa priradí automaticky, podobné názvy čakajú v Produkty → Párovanie.
+
+**Automatické objavovanie produktov konkurenta.** Detail konkurenta → Katalóg konkurenta: zvoľte „Tieňový režim“,
+potvrďte kontrolu podmienok webu a uložte. Aplikácia v nočnom okne sama nájde zdroj produktov (sitemap, feed,
+zoznam so stránkovaním alebo adaptér webu, napr. alter.cz). Nové produkty spáruje s porovnateľnými vlastnými
+podľa ročníka, predmetu, typu a dielu, prípadne podľa ISBN/EAN. Po dvoch úspešných tieňových behoch prejde
+do automatiky a spárované produkty začne sledovať. Nejednoznačné položky čakajú v záložke na kontrolu.
+Bezpečnostné pravidlá a odchýlky sú opísané v [docs/AUTO_DISCOVERY_PLAN.md](docs/AUTO_DISCOVERY_PLAN.md).
 
 **Vlastné produkty z feedu e-shopu.** Nastavenia → Vlastné produkty z feedu e-shopu: adresa feedu
 (pre etaktik.cz `https://www.etaktik.cz/export/heureka.php`), trh `CZ`, interval 24 h, zapnúť „Automaticky“.

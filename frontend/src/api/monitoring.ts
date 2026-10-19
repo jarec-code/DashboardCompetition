@@ -20,6 +20,21 @@ export interface Monitoring {
   problem_competitors: { id: number; name: string; failed_runs_in_row: number; last_error: string | null }[];
   problem_offers: { id: number; competitor_id: number; competitor_name: string; product_url: string;
                     consecutive_failures: number; last_error: string | null; last_success_at: string | null }[];
+  discovery: DiscoveryState[];
+}
+
+export interface DiscoveryState {
+  competitor_id: number;
+  competitor_name: string;
+  mode: "shadow" | "auto";
+  running: boolean;
+  last_run_status: string | null;
+  last_run_at: string | null;
+  next_run_at: string | null;
+  paused_until: string | null;
+  last_error: string | null;
+  review: number;
+  tracked_auto: number;
 }
 
 export interface RunItem {

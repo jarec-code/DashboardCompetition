@@ -522,6 +522,17 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
+### Doplnok: Automatické objavovanie produktov konkurentov ✅ 19. 10. 2026
+
+Podľa [AUTO_DISCOVERY_PLAN.md](AUTO_DISCOVERY_PLAN.md), body 1–5 schválené.
+- **Funkcie:** katalóg konkurenta, rozpoznanie zdroja, týždenné objavovanie s rozpočtom, poistkou a ochranou pred
+  zmenou štruktúry webu, párovanie podľa porovnateľnosti, tieňový režim s automatickým prechodom, denné ceny
+  zo zoznamu (alter.cz), UI a monitoring.
+- **Testy:** backend 362, Vitest 4, e2e 30.
+- **Zapnutie:** pre každého konkurenta urobí administrátor v aplikácii (potvrdenie podmienok webu).
+
+---
+
 ### Etapa 10 (voliteľná): Playwright pre weby vyžadujúce JavaScript
 
 Iba ak niektorý konkurent neposkytuje dáta v HTML, JSON-LD ani feede.

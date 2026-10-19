@@ -27,9 +27,10 @@ export interface Offer {
   variant: string;
   external_product_id: string | null;
   product: { id: number; name: string } | null;
-  matching_method: "identifier" | "name" | "manual" | "ai" | null;
+  matching_method: "identifier" | "name" | "manual" | "ai" | "attributes" | null;
   match_status: MatchStatus;
   match_score: string | null;
+  price_source: "page" | "listing";
   status: OfferStatus;
   custom_frequency_hours: number | null;
   next_check_at: string | null;

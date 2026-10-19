@@ -61,5 +61,7 @@ class ScrapeConfig(TimestampMixin, Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     last_test_status: Mapped[str | None] = mapped_column(String(16))
     last_test_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Automatic product discovery: settings and state (app.services.discovery.DiscoverySettings).
+    discovery: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
 
     competitor: Mapped[Competitor] = relationship(back_populates="scrape_config")

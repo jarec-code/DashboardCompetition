@@ -47,7 +47,8 @@ def _to_out(row) -> OfferOut:
         product_url=offer.product_url, variant=offer.variant, external_product_id=offer.external_product_id,
         product=ProductRef(id=product_id, name=product_name) if product_id else None,
         matching_method=offer.matching_method, match_status=offer.match_status, match_score=offer.match_score,
-        status=offer.status, custom_frequency_hours=offer.custom_frequency_hours, next_check_at=offer.next_check_at,
+        price_source=offer.price_source, status=offer.status, custom_frequency_hours=offer.custom_frequency_hours,
+        next_check_at=offer.next_check_at,
         current=CurrentPriceOut.model_validate(current, from_attributes=True) if current else None,
         created_at=offer.created_at, updated_at=offer.updated_at,
     )

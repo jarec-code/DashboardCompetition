@@ -1,6 +1,7 @@
 # Plán: automatické objavovanie a párovanie produktov konkurentov
 
-Stav: **návrh na schválenie** (19. 10. 2026). Nič z tohto plánu ešte nie je implementované.
+Stav: **schválené 19. 10. 2026 (body 1–5) a implementované** (etapy A–G). Odchýlky od návrhu sú v časti
+„Implementácia“ na konci.
 
 ## Cieľ
 
@@ -162,3 +163,47 @@ Prevádzkové náklady sa takmer nezmenia: rádovo desiatky až stovky požiadav
 4. **Tieňový režim.** Odporúčam ho pre každého nového konkurenta. Do automatiky sa prepne sám podľa podmienok v časti E.
 5. **Poradie realizácie.** Odporúčam A → B → C → E (najprv objavovanie v tieňovom režime na alter.cz),
    potom D a F.
+
+## Implementácia (19. 10. 2026)
+
+- **Kód:**
+  - `app/models/discovery.py`: katalóg konkurenta, behy objavovania.
+  - `app/scraping/catalog.py`: zdroje sitemap, feed a zoznam so stránkovaním, adaptéry webov.
+  - `app/scraping/sites/alter_cz.py`: zoznam `/shop`.
+  - `app/services/comparable.py`: párovanie podľa porovnateľnosti.
+  - `app/services/discovery.py`: stavový beh vo workeri.
+  - `app/api/discovery.py`: API.
+  - Záložka „Katalóg konkurenta“ v detaile konkurenta, prehľad v Aktualizáciách a logoch. Migrácia `0009`.
+- **Beh vo workeri:** jedna požiadavka na jedno volanie a rozostup je spoločný s kontrolami cien. Beh je uložený
+  v databáze, takže pokračuje po reštarte aj ďalšiu noc. „Spustiť teraz“ ignoruje nočné okno, ale nie rozpočet
+  ani rozostup.
+- **alter.cz – odchýlka:** zo zoznamu `/shop` sa na produktovú stránku `/produkt/…` dá dostať iba cez dialóg
+  košíka. Ten vyžaduje zvoliť typ zákazníka v relácii, čo by menilo stav na strane webu, preto sa nepoužíva.
+  Podľa rozhodnutia z 19. 10. 2026 sa preto **ceny sledovaných produktov alter.cz čítajú priamo zo zoznamu**:
+  denne 12 požiadaviek pre celý katalóg (271 položiek). Cena v zozname sa zhoduje s produktovou stránkou
+  (overené na Průvodce učebnicí prvouky, 65 Kč). Chýba EAN a dostupnosť; cena skupiny je cena tlačeného titulu.
+  Ponuky sú označené „cena zo zoznamu“ a „Skontrolovať teraz“ sa pri nich neponúka.
+  Všeobecný mechanizmus „cena zo zoznamu“ funguje aj pre feed iného konkurenta.
+- **Na kontrolu:** nejednoznačné položky sa riešia priamo v záložke „Katalóg konkurenta“ (návrhy jedným klikom
+  alebo ľubovoľný produkt), nie v Produkty → Párovanie.
+- **Skúška párovania na reálnych dátach** (271 položiek alter.cz proti 1 085 vlastným produktom):
+  - 17 sa spárovalo automaticky: pracovné zošity k češtine podľa ročníka a dielu, čítanky pre 4.–9. ročník,
+    príručky k prvouke a matematike,
+  - 205 ide na kontrolu (písanky, slabikáre, abecedy s viacerými porovnateľnými sériami),
+  - 49 je nesúvisiacich (žiacke knižky, etická výchova, obaly).
+  Spomedzi vydaní toho istého titulu sa volí revidované. Hraničný prípad: „Pracovní sešit k Čítance 3, 2. díl“ sa
+  spároval s pracovným zošitom k češtine 3, 2. díl; dá sa vrátiť jedným klikom („Zrušiť párovanie“).
+- **Testy:**
+  - backend: celý tok na uložených stránkach alter.cz (tieňový → automatický → denné ceny), zmiznuté po dvoch
+    behoch, ochrana pri náhlom poklese počtu, pozastavenie pri 429, rozpoznanie sitemapy z robots.txt aj zoznamu
+    z domovskej stránky, guardy (podmienky, nočné okno) a API,
+  - e2e: tieňový a automatický režim v prehliadači.
+
+## Zapnutie pre konkurenta
+
+Detail konkurenta → Katalóg konkurenta:
+1. Režim „Tieňový režim“.
+2. Potvrdiť kontrolu podmienok webu a uložiť.
+3. Voliteľne „Spustiť teraz“, inak sa beh spustí v najbližšom nočnom okne.
+
+Po dvoch úspešných behoch (druhý o deň neskôr) sa režim sám prepne na automatický.

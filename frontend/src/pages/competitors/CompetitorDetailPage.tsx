@@ -13,6 +13,7 @@ import { CompetitorFormModal } from "./CompetitorFormModal";
 import { RUN_STATUS_LABELS, SOURCE_LABELS, STATUS_LABELS, TYPE_LABELS } from "./labels";
 import { OffersPanel } from "../offers/OffersPanel";
 import { ScrapeConfigForm } from "./ScrapeConfigForm";
+import { DiscoveryTab } from "./DiscoveryTab";
 import { StatusActions } from "./StatusActions";
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
@@ -123,6 +124,7 @@ export function CompetitorDetailPage() {
           <Tabs.List>
             <Tabs.Tab value="basic">Základné údaje</Tabs.Tab>
             <Tabs.Tab value="offers">Sledované produkty</Tabs.Tab>
+            <Tabs.Tab value="catalog">Katalóg konkurenta</Tabs.Tab>
             <Tabs.Tab value="scraping">Nastavenia scrapingu</Tabs.Tab>
             <Tabs.Tab value="monitoring">Monitoring</Tabs.Tab>
           </Tabs.List>
@@ -131,6 +133,7 @@ export function CompetitorDetailPage() {
             <OffersPanel competitorId={competitor.id} domain={competitor.domain}
                          archived={competitor.status === "archived"} />
           </Tabs.Panel>
+          <Tabs.Panel value="catalog" p="md"><DiscoveryTab competitorId={competitor.id} readOnly={!isAdmin} /></Tabs.Panel>
           <Tabs.Panel value="scraping" p="md">
             <ScrapeConfigForm competitorId={competitor.id} baseUrl={competitor.base_url} config={competitor.scrape_config}
                               readOnly={!isAdmin} />

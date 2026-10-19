@@ -32,15 +32,17 @@ from app.cli import migrate  # noqa: E402
 from app.db import SessionLocal, engine  # noqa: E402
 from app.models import User  # noqa: E402
 from app.security import hash_password  # noqa: E402
-from app.services import scheduling  # noqa: E402
+from app.services import discovery, scheduling  # noqa: E402
 from app.worker import worker  # noqa: E402
 
 worker.CATALOG_CHECK_SECONDS = 1  # a requested catalogue sync starts at once
+discovery.Runner._spacing = lambda self, url: 0.5  # discovery requests without the real 10 s spacing
 
 USERS = [("admin@e2e.test", "admin"), ("viewer@e2e.test", "viewer")]
 PASSWORD = "e2e-heslo-12345"
 PAGES = Path(__file__).parent / "fixtures" / "html" / "alter_cz"
 FEED = Path(__file__).parent / "fixtures" / "etaktik" / "heureka.xml"
+DISCOVERY_HOST = "objav.alter.e2e.test"
 PRICE_OVERRIDES: dict[str, str] = {}
 
 
@@ -58,8 +60,14 @@ class FakeShop(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urlsplit(self.path)
-        if url.path == "/robots.txt":
-            return self._send(200, "User-agent: *\nDisallow: /kosik/\n", "text/plain")
+        if url.path == "/robots.txt":  # the sitemap is used by the product discovery test (objav.alter.e2e.test)
+            return self._send(200, f"User-agent: *\nDisallow: /kosik/\nSitemap: https://{DISCOVERY_HOST}/sitemap.xml\n",
+                              "text/plain")
+        if url.path == "/sitemap.xml":
+            locs = "".join(f"<url><loc>https://{DISCOVERY_HOST}/produkt/{n}</loc></url>" for n in (716, 1111, 181, 277))
+            return self._send(200, '<?xml version="1.0" encoding="UTF-8"?><urlset '
+                                   f'xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{locs}</urlset>',
+                              "application/xml")
         if url.path == "/__set_price":
             params = parse_qs(url.query)
             PRICE_OVERRIDES[params["id"][0]] = params["value"][0]

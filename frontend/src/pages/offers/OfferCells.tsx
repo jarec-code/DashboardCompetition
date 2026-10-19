@@ -15,7 +15,8 @@ export function OfferUrlCell({ offer }: { offer: Offer }) {
   return (
     <Stack gap={0}>
       {offer.current?.title && <Text size="sm" fw={500} lineClamp={1}>{offer.current.title}</Text>}
-      <Anchor href={offer.product_url} target="_blank" rel="noopener noreferrer" size="xs">{path}</Anchor>
+      <Anchor href={offer.product_url} target="_blank" rel="noopener noreferrer" size="xs">
+        {offer.price_source === "listing" ? "v zozname produktov" : path}</Anchor>
       {offer.variant && <Text size="xs" c="dimmed">variant: {offer.variant}</Text>}
     </Stack>
   );
@@ -24,8 +25,10 @@ export function OfferUrlCell({ offer }: { offer: Offer }) {
 /** Price, availability and freshness; unknown values are shown as such, never invented. */
 export function OfferPriceCell({ offer }: { offer: Offer }) {
   const c = offer.current;
-  const next = offer.status === "active" && offer.next_check_at
-    ? <Text size="xs" c="dimmed">ďalšia kontrola {formatDateTime(offer.next_check_at)}</Text> : null;
+  const next = offer.price_source === "listing"
+    ? <Text size="xs" c="dimmed">cena zo zoznamu konkurenta, denne</Text>
+    : offer.status === "active" && offer.next_check_at
+      ? <Text size="xs" c="dimmed">ďalšia kontrola {formatDateTime(offer.next_check_at)}</Text> : null;
   if (!c || !c.last_checked_at) return <Stack gap={0}><Text size="sm" c="dimmed">zatiaľ nekontrolované</Text>{next}</Stack>;
   const availability = AVAILABILITY_LABELS[c.availability] ?? AVAILABILITY_LABELS.unknown;
   return (
@@ -71,7 +74,7 @@ export function OfferActions({ offer, onAssign, onHistory }: {
 
   return (
     <Group gap={4} wrap="nowrap" justify="flex-end">
-      <CheckButton offer={offer} />
+      {offer.price_source === "page" && <CheckButton offer={offer} />}
       <Tooltip label="Priradiť k produktu" withArrow>
         <ActionIcon variant="light" aria-label="Priradiť k produktu" onClick={() => onAssign(offer)}>
           <IconLink size={16} />

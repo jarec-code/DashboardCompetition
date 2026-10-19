@@ -6,6 +6,12 @@ Product page layout (checked on saved samples in tests/fixtures/html/alter_cz):
     variants are e.g. "tištěná" (printed) and "elektronická — pro školy"
   - details: <span class="detail_key">Dostupnost:</span> <span class="detail_value">Skladem</span>
   - EAN only in the description text: "EAN: 8594165541796"
+
+Listing /shop (?page=0…, 24 cards per page, rel="next" pagination), used by automatic discovery:
+  - one card per product group: <div class="… views-row"> with <h3 class="mainHeigh">title</h3>,
+    <h3 class="categoryH">… 1. ročník</h3> and <span class="priceNum">65</span> (printed title, CZK)
+  - the card links only to the group (/cart/add_dialog/277), not to the product page /produkt/716,
+    so a group is identified as "polozka:277" and its price is read from the listing itself.
 """
 import re
 
@@ -13,6 +19,8 @@ from bs4 import BeautifulSoup
 
 from app.scraping.normalize import detect_currency, find_identifiers, normalize_availability, parse_price
 from app.scraping.parsers.base import Extracted, PageContext, ParseError
+
+_GROUP = re.compile(r"/cart/add_dialog/(\d+)")
 
 VERSION = 1
 DEFAULT_VARIANT = "tištěná"
@@ -74,3 +82,26 @@ def parse(ctx: PageContext) -> Extracted:
         available_variants=[name for name, _ in variants],
         source="alter_cz",
     )
+
+
+def listing_items(soup: BeautifulSoup, page_url: str) -> list:
+    """Product groups on one page of the /shop listing, with title, grade and price."""
+    from app.scraping.catalog import FoundItem
+
+    base = page_url.split("/shop")[0]
+    items = []
+    for card in soup.select("div.views-row"):
+        link = card.find("a", href=_GROUP)
+        title = card.select_one("h3.mainHeigh")
+        if link is None or title is None:
+            continue
+        group = _GROUP.search(link["href"]).group(1)
+        grade = card.select_one("h3.categoryH")
+        price = card.select_one(".priceNum")
+        hints = {"grade": " ".join(grade.get_text(" ", strip=True).split())} if grade else {}
+        value = parse_price(price.get_text(strip=True)) if price else None
+        items.append(FoundItem(key=f"polozka:{group}", url=f"{base}/shop#polozka-{group}",
+                               title=" ".join(title.get_text(" ", strip=True).split()),
+                               price=value, currency="CZK" if value else None, price_from_listing=value is not None,
+                               hints=hints))
+    return items
