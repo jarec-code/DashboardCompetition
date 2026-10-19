@@ -59,10 +59,11 @@ z alter.cz a jej história ostanú priradené.
 |---|---|---|---|---|---|---|
 | Synchronizácia feedu (worker, 22 s od požiadavky) | 1 229 | 1 224 | 5 (pôvodné ručne zadané produkty) | 0 | 0 | 0 |
 | Priložené CSV | 820 | 8 | 732 | 5 | 0 | 75 |
+| Google CSV (`/export/google.php`) | 1 217 | 0 | 1 217 (dostupnosť) | 0 | 0 | 0 |
 
 Spolu **1 237 produktov**. Pôvodný produkt #4 (Hravá prvouka 1 – metodická příručka, rev. RVP ZV) si ponechal ID,
 dostal interné ID 3965, ISBN, URL a parametre; ponuka z alter.cz a upozornenie „Konkurent je lacnejší o 65,6 %“
-ostali. Automatická synchronizácia je zapnutá (raz za 24 h). Google CSV (krok 3) zatiaľ nebolo importované.
+ostali. Automatická synchronizácia je zapnutá (raz za 24 h).
 
 Postup pre opätovné načítanie (zápis robí administrátor v aplikácii):
 1. Nastavenia → Vlastné produkty z feedu e-shopu: adresa `https://www.etaktik.cz/export/heureka.php`, trh CZ,
