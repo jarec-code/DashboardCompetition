@@ -747,7 +747,7 @@ class JsonSite(FakeSite):
 
 
 def test_nns_json_listing_per_grade_with_paging(db):
-    competitor(db, "NNS", "https://www.nns.cz/", "nns.cz")
+    nns = competitor(db, "NNS", "https://www.nns.cz/", "nns.cz")
     math = product(db, "Matematika 1 – 3. díl", "79", attributes={"grade": "1. ročník", "subject": "Matematika"})
 
     def listing(offset, tags):
@@ -771,6 +771,8 @@ def test_nns_json_listing_per_grade_with_paging(db):
                                                              "ids": []})
     assert ("/obchod/api/inventory/60/60", {"tags": [5, 7], "query": "", "packages": False, "ids": []}) in site.posts
     assert run.stats["found"] == 61  # the item of another grade is left out
+    stored = settings_of(db, nns).source.urls  # the grades survive storing the source
+    assert len(set(stored)) == 10 and "https://www.nns.cz/obchod/api/inventory/60/0?tags=5,17" in stored
     item = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:1649"))
     assert (item.url, item.title, item.price, item.price_from_listing) == (
         "https://www.nns.cz/obchod/index.php?item=nab_det&sort_id=1649", "Zápis je tu", Decimal("99.00"), True)
