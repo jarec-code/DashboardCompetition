@@ -10,6 +10,7 @@ import urllib.robotparser
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from typing import Any
 from urllib.parse import urljoin, urlsplit
 
 import httpx
@@ -87,7 +88,9 @@ class Fetcher:
     # ---------- public API ----------
 
     def fetch(self, url: str, timeout: float, etag: str | None = None, last_modified: str | None = None,
-              max_bytes: int | None = None) -> FetchResult:
+              max_bytes: int | None = None, json_body: Any = None) -> FetchResult:
+        """GET a page. With `json_body` it is a read-only POST of a JSON query (only for site adapters that
+        read a shop's own listing interface, see app.scraping.catalog); such a request follows no redirect."""
         started = time.monotonic()
         redirects: list[str] = []
         headers = {}
@@ -98,8 +101,10 @@ class Fetcher:
         current = url
         for _ in range(MAX_REDIRECTS + 1):
             target = self._safe_target(current)
-            response = self._request(target, current, timeout, headers, max_bytes)
+            response = self._request(target, current, timeout, headers, max_bytes, json_body)
             if isinstance(response, _Redirect):
+                if json_body is not None:
+                    raise FetchError(f"Rozhranie odpovedalo presmerovaním (HTTP {response.status}).", "permanent")
                 if not response.location:
                     raise FetchError(f"Presmerovanie (HTTP {response.status}) bez cieľovej adresy.", "permanent")
                 redirects.append(current)
@@ -175,10 +180,12 @@ class Fetcher:
         except OSError as exc:
             raise FetchError(str(exc), "temporary") from None
 
-    def _request(self, target: str, original: str, timeout: float, headers: dict, max_bytes: int | None):
+    def _request(self, target: str, original: str, timeout: float, headers: dict, max_bytes: int | None,
+                 json_body: Any = None):
         limit = max_bytes or self.settings.scraper_max_bytes
+        method, extra = ("GET", {}) if json_body is None else ("POST", {"json": json_body})
         try:
-            with self.client.stream("GET", target, headers=headers, timeout=timeout) as resp:
+            with self.client.stream(method, target, headers=headers, timeout=timeout, **extra) as resp:
                 self._check_peer(resp, original)
                 status = resp.status_code
                 if status in (301, 302, 303, 307, 308):

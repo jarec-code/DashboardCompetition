@@ -146,11 +146,16 @@ def read_listing(html: str, page_url: str, domain: str, pattern: str | None = No
 
 @dataclass
 class Adapter:
-    """A site-specific catalogue reader. `start_urls` are relative to the competitor's base URL."""
+    """A site-specific catalogue reader. `start_urls` are relative to the competitor's base URL.
+
+    `request`, when set, turns a queued address into the real request: (URL, JSON body or None). A JSON
+    body makes it a read-only POST to the shop's own listing interface (the only POST discovery ever sends,
+    allowed per adapter, approved for nns.cz on 19 Oct 2026)."""
     name: str
     domains: tuple[str, ...]
     start_urls: tuple[str, ...]
     read: Callable[[str, str, str], PageResult]
+    request: Callable[[str], tuple[str, Any]] | None = None
 
 
 def _alter_listing(html: str, page_url: str, domain: str) -> PageResult:
@@ -160,8 +165,27 @@ def _alter_listing(html: str, page_url: str, domain: str) -> PageResult:
     return PageResult(items=alter_cz.listing_items(soup, page_url), next_urls=next_page_links(soup, page_url, domain))
 
 
+def _nns_request(url: str) -> tuple[str, Any]:
+    from app.scraping.sites import nns_cz
+
+    return nns_cz.request(url)
+
+
+def _nns_listing(text: str, page_url: str, domain: str) -> PageResult:
+    from app.scraping.sites import nns_cz
+
+    return nns_cz.read(text, page_url)
+
+
+def _nns_start() -> tuple[str, ...]:
+    from app.scraping.sites import nns_cz
+
+    return nns_cz.start_urls()
+
+
 ADAPTERS = [
     Adapter("alter_cz", ("alter.cz",), ("/shop",), _alter_listing),
+    Adapter("nns_cz", ("nns.cz",), _nns_start(), _nns_listing, _nns_request),
 ]
 
 

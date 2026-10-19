@@ -722,3 +722,62 @@ def test_a_website_drawn_by_javascript_is_reported_as_such(db):
     run = run_all(db, site)
     assert run.status == "failed" and "JavaScriptom" in run.error and run.stats["js_app"] is True
     assert any("JavaScript" in a["result"] for a in run.stats["attempts"])
+
+
+class JsonSite(FakeSite):
+    """A shop whose listing is a JSON interface read by POST (nns.cz); records method, path and body."""
+
+    def __init__(self, pages: dict[str, tuple], listing):
+        super().__init__(pages)
+        self.listing = listing  # (offset, tags) -> rows
+        self.posts: list[tuple[str, dict]] = []
+
+    def fetcher(self) -> Fetcher:
+        def handle(request: httpx.Request) -> httpx.Response:
+            target = request.url.raw_path.decode()
+            self.requests.append(target)
+            if request.method == "POST":
+                body = json.loads(request.content)
+                self.posts.append((target, body))
+                offset = int(target.rsplit("/", 1)[1])
+                return httpx.Response(200, json=self.listing(offset, body["tags"]))
+            status, body, *_ = self.pages.get(target, (404, "<h1>Nenalezeno</h1>"))
+            return httpx.Response(status, text=body, headers={"content-type": "text/html; charset=utf-8"})
+        return Fetcher(Settings(), resolver=lambda h, p: ["93.184.216.34"], transport=httpx.MockTransport(handle))
+
+
+def test_nns_json_listing_per_grade_with_paging(db):
+    competitor(db, "NNS", "https://www.nns.cz/", "nns.cz")
+    math = product(db, "Matematika 1 – 3. díl", "79", attributes={"grade": "1. ročník", "subject": "Matematika"})
+
+    def listing(offset, tags):
+        if tags == [5, 17]:
+            return [{"type": "item", "id": 1649, "name": "Zápis je tu", "code": "P-50", "price": 99,
+                     "status": "skladem", "tag_matches": 2}]
+        if tags == [5, 7] and offset == 0:  # a full page: the next one is read too
+            rows = [{"type": "item", "id": 2000 + i, "name": f"Matematika 1 – {i}. díl", "price": 75 + i,
+                     "status": "skladem", "tag_matches": 2} for i in range(59)]
+            return rows + [{"type": "item", "id": 9999, "name": "Jiný ročník", "price": 10, "tag_matches": 1}]
+        if tags == [5, 7] and offset == 60:
+            return [{"type": "item", "id": 3000, "name": "Písanka 1", "price": "39.0", "status": "vyprodano",
+                     "tag_matches": 2}]
+        return []
+
+    site = JsonSite({"/robots.txt": (200, "User-agent: *\nDisallow: /admin/\n")}, listing)
+    run = run_all(db, site)
+    assert run.status == "succeeded" and run.source_type == "adapter", run.stats
+    assert site.requests[0] == "/robots.txt" and len(site.posts) == 11  # 10 grades + the 2nd page of grade 1
+    assert site.posts[0] == ("/obchod/api/inventory/60/0", {"tags": [5, 17], "query": "", "packages": False,
+                                                             "ids": []})
+    assert ("/obchod/api/inventory/60/60", {"tags": [5, 7], "query": "", "packages": False, "ids": []}) in site.posts
+    assert run.stats["found"] == 61  # the item of another grade is left out
+    item = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:1649"))
+    assert (item.url, item.title, item.price, item.price_from_listing) == (
+        "https://www.nns.cz/obchod/index.php?item=nab_det&sort_id=1649", "Zápis je tu", Decimal("99.00"), True)
+    assert item.hints == {"grade": "předškolní vzdělávání", "availability": "in_stock", "code": "P-50"}
+    third = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:2003"))
+    assert third.price == Decimal("78.00") and third.match_status in ("matched", "review")
+    assert third.product_id == math.id or third.candidates[0]["product_id"] == math.id
+    sold_out = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:3000"))
+    assert sold_out.hints["grade"] == "1. ročník" and sold_out.price == Decimal("39.00")
+    assert db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:9999")) is None

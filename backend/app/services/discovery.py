@@ -396,12 +396,13 @@ class Runner:
         self.settings.budget_used += 1
         self.run.requests += 1
 
-    def _fetch(self, url: str, max_bytes: int | None = None):
-        """One request. robots.txt is already loaded (a separate step), so this is the only request."""
+    def _fetch(self, url: str, max_bytes: int | None = None, json_body: Any = None):
+        """One request. robots.txt is already loaded (a separate step), so this is the only request.
+        `json_body` only for an adapter's read-only listing interface (catalog.Adapter.request)."""
         if not self.fetcher.robots_allowed(url):
             raise FetchError("Súbor robots.txt webu zakazuje načítanie tejto stránky.", "permanent", 403)
         self._count_request(url)
-        return self.fetcher.fetch(url, timeout=self.config.timeout_seconds, max_bytes=max_bytes)
+        return self.fetcher.fetch(url, timeout=self.config.timeout_seconds, max_bytes=max_bytes, json_body=json_body)
 
     def _save(self) -> None:
         save(self.config, self.settings)
@@ -849,7 +850,9 @@ class Runner:
     def _list_page(self, url: str) -> None:
         source = self.settings.source
         max_bytes = 5 * 1024 * 1024 if source.type in ("sitemap", "feed") else None
-        response = self._fetch(url, max_bytes=max_bytes)
+        adapter = catalog.adapter_by_name(source.adapter) if source.type == "adapter" else None
+        target, body = adapter.request(url) if adapter and adapter.request else (url, None)
+        response = self._fetch(target, max_bytes=max_bytes, json_body=body)
         domain = self.competitor.domain
         try:
             if source.type == "sitemap":
@@ -857,9 +860,8 @@ class Runner:
             elif source.type == "feed":
                 result = catalog.read_feed((response.text or "").encode("utf-8"), response.url, domain,
                                            _currency(self.competitor))
-            elif source.type == "adapter":
-                adapter = catalog.adapter_by_name(source.adapter)
-                result = adapter.read(response.text or "", response.url, domain)
+            elif adapter is not None:
+                result = adapter.read(response.text or "", url if body is not None else response.url, domain)
             else:
                 result = catalog.read_listing(response.text or "", response.url, domain, source.pattern)
         except ValueError as exc:
