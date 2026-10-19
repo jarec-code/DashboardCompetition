@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from app.config import Settings, get_settings
 from app.db import SessionLocal
 from app.scraping.fetcher import Fetcher
-from app.services import alerts, housekeeping, scheduling
+from app.services import alerts, catalog_sync, housekeeping, scheduling
 from app.worker import queue, scheduler
 from app.worker.processor import Processor
 
@@ -22,6 +22,7 @@ log = logging.getLogger("worker")
 RECOVERY_INTERVAL_SECONDS = 60
 ALERTS_INTERVAL_SECONDS = 300
 CLEANUP_INTERVAL_SECONDS = 6 * 3600
+CATALOG_CHECK_SECONDS = 30  # how often to look whether the own catalogue feed is due (or was requested)
 
 
 class Worker:
@@ -33,6 +34,7 @@ class Worker:
         self._last_tick = 0.0
         self._last_alerts = 0.0
         self._last_cleanup = 0.0
+        self._last_catalog = 0.0
 
     def run_once(self) -> int:
         """Housekeeping when due, then process at most one job. Returns the number of processed jobs."""
@@ -53,6 +55,9 @@ class Worker:
                 self._last_alerts = time.monotonic()
                 alerts.evaluate_all(db)  # e.g. prices that became stale without any check
                 db.commit()
+            if time.monotonic() - self._last_catalog > CATALOG_CHECK_SECONDS:
+                self._last_catalog = time.monotonic()
+                catalog_sync.run_if_due(db, self.fetcher)
             if self.settings.scheduler_in_worker and \
                     time.monotonic() - self._last_tick > self.settings.scheduler_interval_seconds:
                 self._last_tick = time.monotonic()

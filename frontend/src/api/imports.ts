@@ -2,13 +2,14 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { api, ApiError, getCsrfToken } from "./client";
 
-export type RowStatus = "ok" | "warning" | "duplicate" | "error";
+export type RowStatus = "ok" | "warning" | "update" | "unchanged" | "review" | "duplicate" | "error";
 
 export interface ImportRow {
   row: number;
   status: RowStatus;
   reason: string | null;
   data: Record<string, unknown>;
+  product_id?: number;
 }
 
 export interface ImportBatch {
@@ -19,12 +20,16 @@ export interface ImportBatch {
   file_format: string;
   competitor_id: number | null;
   rows: ImportRow[];
-  stats: { ok: number; warning: number; duplicate: number; error: number };
+  stats: Record<RowStatus, number>;
   created_at: string;
 }
 
 export interface CommitResult {
+  processed: number;
   imported: number;
+  updated: number;
+  unchanged: number;
+  review: number;
   duplicates: number;
   errors: number;
   skipped_at_commit: { row: number; reason: string }[];
@@ -33,11 +38,13 @@ export interface CommitResult {
 /** Multipart upload; returns the validated preview. Nothing is saved until commit. */
 export function useUploadImport() {
   return useMutation({
-    mutationFn: async ({ file, kind, competitorId }: { file: File; kind: "products" | "offers"; competitorId?: number }) => {
+    mutationFn: async ({ file, kind, competitorId, market }:
+                       { file: File; kind: "products" | "offers"; competitorId?: number; market?: string }) => {
       const body = new FormData();
       body.append("file", file);
       body.append("kind", kind);
       if (competitorId !== undefined) body.append("competitor_id", String(competitorId));
+      if (market) body.append("market", market);
       const response = await fetch("/api/imports", {
         method: "POST", body, credentials: "same-origin", headers: { "X-CSRF-Token": getCsrfToken() ?? "" },
       });

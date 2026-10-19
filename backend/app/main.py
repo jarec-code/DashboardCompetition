@@ -10,6 +10,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app.api import (
     alerts,
     auth,
+    catalog,
     comparison,
     competitors,
     history,
@@ -85,6 +86,7 @@ api.include_router(comparison.router)
 api.include_router(history.router)
 api.include_router(alerts.router)
 api.include_router(imports.router)
+api.include_router(catalog.router)
 app.include_router(auth.router, prefix="/api")  # login works without a CSRF token; others check it
 app.include_router(api)
 

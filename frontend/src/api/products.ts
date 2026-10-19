@@ -5,6 +5,7 @@ import type { Page, VatMode } from "./competitors";
 
 export type Priority = "strategic" | "regular" | "stable";
 export type TrackingStatus = "active" | "paused";
+export type Availability = "in_stock" | "out_of_stock" | "preorder" | "unknown";
 
 export interface ProductPrice {
   market: string;
@@ -17,6 +18,7 @@ export interface ProductAttributes {
   subject?: string | null;
   grade?: string | null;
   type?: string | null;
+  year?: string | null;
 }
 
 export interface Product {
@@ -32,6 +34,12 @@ export interface Product {
   priority: Priority;
   tracking_status: TrackingStatus;
   prices: ProductPrice[];
+  url: string | null;
+  image_url: string | null;
+  availability: Availability;
+  source_kind: "file" | "feed" | null;
+  source: string | null;
+  source_synced_at: string | null;
   offer_count: number;
   created_at: string;
   updated_at: string;
@@ -48,6 +56,7 @@ export interface ProductInput {
   attributes: ProductAttributes;
   priority: Priority;
   tracking_status: TrackingStatus;
+  url: string | null;
   prices: { market: string; price: string; currency: string | null; vat_mode: VatMode }[];
 }
 

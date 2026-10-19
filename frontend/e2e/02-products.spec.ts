@@ -53,14 +53,27 @@ test.describe.serial("Produkty a ponuky", () => {
     await dialog.locator("input[type=file]").setInputFiles({ name: "produkty.csv", mimeType: "text/csv",
                                                             buffer: Buffer.from(csv) });
     await dialog.getByRole("button", { name: "Načítať náhľad" }).click();
-    await expect(dialog.getByText("v poriadku: 2")).toBeVisible();
+    await expect(dialog.getByText("nový: 2")).toBeVisible();
     await expect(dialog.getByText("chyba: 1")).toBeVisible();
-    await expect(dialog.getByText("Chýba cena.")).toBeVisible();
+    await expect(dialog.getByText(/Bez ceny a bez URL/)).toBeVisible();
     const list = page.getByRole("tabpanel", { name: "Vlastné produkty" }).locator("tbody tr");
     await expect(list).toHaveCount(1);                        // nothing saved before confirming
-    await dialog.getByRole("button", { name: "Importovať 2 riadky" }).click();
-    await expect(dialog.getByText(/Importované:\s*2/)).toBeVisible();
+    await dialog.getByRole("button", { name: "Uložiť 2 riadky" }).click();
+    await expect(dialog.getByText(/nové:\s*2/)).toBeVisible();
     await dialog.getByRole("button", { name: "Zavrieť" }).click();
+    await expect(rows(page)).toHaveCount(3);
+
+    // The same file again changes nothing; a changed price without an identifier waits for a person.
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    const changed = csv.replace("159;CZK", "149;CZK");
+    await dialog.locator("input[type=file]").setInputFiles({ name: "produkty.csv", mimeType: "text/csv",
+                                                            buffer: Buffer.from(changed) });
+    await dialog.getByRole("button", { name: "Načítať náhľad" }).click();
+    await expect(dialog.getByText("bez zmeny: 1")).toBeVisible();
+    await expect(dialog.getByText("na kontrolu: 1")).toBeVisible();
+    await expect(dialog.getByText(/Možná zhoda s produktom „Detektiv Písmenko 5“/)).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Uložiť 0 riadkov" })).toBeDisabled();
+    await dialog.getByRole("button", { name: "Zrušiť import" }).click();
     await expect(rows(page)).toHaveCount(3);
 
     await page.getByLabel("Hľadať").fill("písmenko");

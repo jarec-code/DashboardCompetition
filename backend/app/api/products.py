@@ -26,7 +26,7 @@ SORT_COLUMNS = {
     "updated": Product.updated_at,
 }
 SortKey = Literal[tuple(SORT_COLUMNS) + tuple(f"-{k}" for k in SORT_COLUMNS)]  # type: ignore[valid-type]
-IDENTIFIER_LABELS = {"isbn": "ISBN", "ean": "EAN", "sku": "SKU", "internal_id": "interné ID"}
+IDENTIFIER_LABELS = {"isbn": "ISBN", "ean": "EAN", "sku": "SKU", "internal_id": "interné ID", "url": "URL"}
 
 
 def _escape_like(value: str) -> str:

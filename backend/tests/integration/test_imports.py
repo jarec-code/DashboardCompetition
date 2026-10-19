@@ -1,12 +1,13 @@
 import io
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
 from openpyxl import Workbook
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from app.config import Settings
-from app.models import Competitor, CompetitorProduct, Product, ScrapeConfig
+from app.models import Competitor, CompetitorProduct, Product, ProductPrice, ScrapeConfig
 from app.scraping.discover import discover_links
 from app.scraping.fetcher import Fetcher
 from app.worker import queue
@@ -51,29 +52,35 @@ def test_products_csv_preview_then_commit(client, db):
     assert r.status_code == 201, r.text
     batch = r.json()
     assert batch["status"] == "preview" and batch["file_format"] == "csv"
-    assert statuses(batch) == [(2, "ok"), (3, "duplicate"), (4, "error"), (5, "error"), (6, "duplicate"),
-                               (7, "error"), (8, "ok")]
+    assert statuses(batch) == [(2, "ok"), (3, "review"), (4, "error"), (5, "error"), (6, "duplicate"),
+                               (7, "warning"), (8, "ok")]
     reasons = {r["row"]: r["reason"] for r in batch["rows"]}
-    assert reasons[3].startswith("Produkt už existuje") and reasons[6] == "Rovnaký produkt je už v riadku 2"
-    assert reasons[4] == "Chýba cena." and reasons[5].startswith("Chýba trh")
-    assert reasons[7].startswith("isbn")
-    assert batch["stats"] == {"ok": 2, "warning": 0, "duplicate": 2, "error": 3}
+    assert reasons[3].startswith("Možná zhoda s produktom „Kadeřník & kadeřnice 2“")  # a name alone is not enough
+    assert reasons[6] == "Rovnaký produkt je už v riadku 2."
+    assert reasons[4].startswith("Bez ceny a bez URL") and reasons[5].startswith("Chýba trh")
+    assert reasons[7] == "Neplatné ISBN „978-0-306-40615-8“ sa ignoruje."  # the row is kept without it
+    assert batch["stats"] == {"ok": 2, "warning": 1, "update": 0, "unchanged": 0, "review": 1, "duplicate": 1,
+                              "error": 2}
     assert db.scalar(select(Product).where(Product.name == "Kniha v eurách")) is None  # nothing saved yet
 
     result = client.post(f"/api/imports/{batch['id']}/commit").json()
-    assert result == {"imported": 2, "duplicates": 2, "errors": 3, "skipped_at_commit": []}
+    assert result == {"processed": 7, "imported": 3, "updated": 0, "unchanged": 0, "review": 1, "duplicates": 1,
+                      "errors": 2, "skipped_at_commit": []}
     euro = client.get("/api/products", params={"q": "eurách"}).json()["items"][0]
     assert euro["prices"] == [{"market": "SK", "price": "10.00", "currency": "EUR", "vat_mode": "with_vat"}]
+    assert (euro["source_kind"], euro["source"]) == ("file", "produkty.csv") and euro["source_synced_at"]
     assert client.post(f"/api/imports/{batch['id']}/commit").status_code == 409  # only once
 
 
-def test_commit_rechecks_duplicates_and_discard(client, db):
+def test_commit_rechecks_against_current_catalogue_and_discard(client, db):
     admin(client)
-    batch = upload(client, b"name,price,currency\nNova kniha,10,EUR\n").json()
-    db.add(Product(name="Nova kniha"))  # created by someone else after the preview
+    batch = upload(client, b"name,price,currency,isbn\nNova kniha,10,EUR,978-0-306-40615-7\n").json()
+    assert statuses(batch) == [(2, "ok")]
+    db.add(Product(name="Nova kniha (iný názov)", isbn="9780306406157"))  # created by someone else meanwhile
     db.commit()
     result = client.post(f"/api/imports/{batch['id']}/commit").json()
-    assert result["imported"] == 0 and result["skipped_at_commit"][0]["reason"] == "Produkt medzitým pribudol."
+    assert (result["imported"], result["updated"]) == (0, 1)  # updated instead of a duplicate
+    assert len(db.scalars(select(Product)).all()) == 1
 
     other = upload(client, b"name,price,currency\nIna kniha,10,EUR\n").json()
     assert client.post(f"/api/imports/{other['id']}/discard").status_code == 204
@@ -101,13 +108,132 @@ def test_excel_and_feeds(client):
     batch = upload(client, heureka.encode(), name="heureka.xml").json()
     assert batch["file_format"] == "heureka" and statuses(batch) == [(1, "error"), (2, "error")]
     assert batch["rows"][0]["reason"].startswith("Chýba trh")  # Heureka has no currency: market must be given
+    batch = client.post("/api/imports", data={"kind": "products", "market": "cz"},
+                        files={"file": ("heureka.xml", heureka.encode(), "application/xml")}).json()
+    assert statuses(batch) == [(1, "ok"), (2, "error")]
+    assert batch["rows"][0]["data"]["prices"][0] == {"market": "CZ", "price": "114.00", "currency": "CZK",
+                                                    "vat_mode": "with_vat"}
     google = """<?xml version="1.0"?><rss xmlns:g="http://base.google.com/ns/1.0" version="2.0"><channel>
       <item><g:id>T-1</g:id><title>Hravá matematika 2</title><g:price>114.00 CZK</g:price>
-        <g:gtin>9780306406157</g:gtin><link>https://www.etaktik.cz/m2</link></item></channel></rss>"""
+        <g:gtin>9780306406157</g:gtin><link>https://www.etaktik.cz/m2</link>
+        <g:availability>out of stock</g:availability></item></channel></rss>"""
     batch = upload(client, google.encode(), name="google.xml").json()
     assert batch["file_format"] == "google" and statuses(batch) == [(1, "ok")]
     data = batch["rows"][0]["data"]
-    assert (data["ean"], data["internal_id"], data["prices"][0]["market"]) == ("9780306406157", "T-1", "CZ")
+    assert (data["isbn"], data["ean"], data["internal_id"]) == ("9780306406157", None, "T-1")  # 978… = ISBN
+    assert (data["prices"][0]["market"], data["availability"]) == ("CZ", "out_of_stock")
+
+
+ETAKTIK = Path(__file__).parent.parent / "fixtures" / "etaktik"
+
+
+def upload_fixture(client, name: str, market: str | None = "CZ"):
+    data = {"kind": "products", **({"market": market} if market else {})}
+    r = client.post("/api/imports", data=data, files={"file": (name, (ETAKTIK / name).read_bytes(), "text/plain")})
+    assert r.status_code == 201, r.text
+    return r.json()
+
+
+def commit(client, batch):
+    r = client.post(f"/api/imports/{batch['id']}/commit")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_etaktik_feed_file_and_reruns(client, db):
+    """Real samples of etaktik.cz: Heureka feed, Google feed (CSV) and the attached product export."""
+    admin(client)
+    feed = upload_fixture(client, "heureka.xml")
+    assert dict(statuses(feed)) == {1: "ok", 2: "ok", 3: "ok", 4: "warning", 5: "ok", 6: "ok", 7: "ok", 8: "ok"}
+    rows = {r["data"]["internal_id"]: r for r in feed["rows"]}
+    assert rows["94"]["reason"] == "Cena v zdroji je 0, produkt bude bez ceny."  # no price is invented
+    assert rows["30"]["data"]["ean"] == "0761742976519"  # the valid one of two EAN elements
+    assert rows["2849"]["data"]["name"] == "Keep calm & draw - animals"  # double-escaped in the feed
+    assert commit(client, feed)["imported"] == 8
+
+    abeceda = db.scalar(select(Product).where(Product.internal_id == "3"))
+    assert (abeceda.isbn, abeceda.ean, abeceda.url) == ("9788077034524", None, "https://www.etaktik.cz/hrava-abeceda/")
+    assert abeceda.image_url.startswith("https://www.etaktik.cz/UserFiles/Image/")
+    assert (abeceda.category, abeceda.source_kind, abeceda.source) == (
+        "1. stupeň ZŠ | Český jazyk | Hravá čeština", "feed", "heureka.xml")
+    assert [(p.market, str(p.price), p.currency) for p in abeceda.prices] == [("CZ", "92.00", "CZK")]
+    assert db.scalar(select(Product).where(Product.internal_id == "94")).prices == []
+
+    again = upload_fixture(client, "heureka.xml")  # idempotent: the same feed again changes nothing
+    assert {s for _, s in statuses(again)} == {"unchanged"}
+    assert commit(client, again)["unchanged"] == 8
+
+    google = upload_fixture(client, "google.csv", market=None)  # CSV variant of the Google feed
+    assert {s for _, s in statuses(google)} == {"update"}
+    assert all("dostupnosť" in r["reason"] for r in google["rows"])
+    assert commit(client, google)["updated"] == 8
+    db.expire_all()
+    assert db.scalar(select(Product).where(Product.internal_id == "3")).availability == "in_stock"
+
+    export = upload_fixture(client, "export_products.csv")
+    by_id = {r["data"].get("internal_id"): r for r in export["rows"]}
+    assert by_id["3"]["status"] == "update" and "parametre" in by_id["3"]["reason"]
+    assert by_id["30"]["reason"].endswith("Neplatné ISBN „0031“ sa ignoruje.")
+    assert by_id["2374"]["status"] == by_id["3223"]["status"] == "error"  # archive item / worksheet: no price, no URL
+    assert by_id["2849"]["status"] == "unchanged"  # the file's tag list does not replace the feed category
+    assert by_id["3619"]["status"] == "ok"  # in the file only (not on the web): kept, marked by its source
+    result = commit(client, export)
+    assert (result["imported"], result["updated"], result["errors"]) == (1, 5, 2)
+    db.expire_all()
+    abeceda = db.scalar(select(Product).where(Product.internal_id == "3"))
+    assert abeceda.attributes == {"type": "Pracovní sešit", "grade": "1. ročník", "subject": "Čeština"}
+    assert abeceda.category == "1. stupeň ZŠ | Český jazyk | Hravá čeština" and abeceda.source_kind == "feed"
+    letsrock = db.scalar(select(Product).where(Product.internal_id == "3619"))
+    assert (letsrock.url, letsrock.source_kind, letsrock.source) == (None, "file", "export_products.csv")
+
+    rerun = upload_fixture(client, "export_products.csv")
+    assert {s for _, s in statuses(rerun)} == {"unchanged", "error"}
+    assert len(db.scalars(select(Product)).all()) == 9
+
+
+def test_existing_manual_products_are_matched_safely(client, db):
+    admin(client)
+    tracked = Product(name="Hravá prvouka 1 - metodická příručka pro učitele – revidované RVP ZV")
+    tracked.prices = [ProductPrice(market="CZ", price=Decimal("189"), currency="CZK")]
+    other_price = Product(name="Matika a já 1 – metodická příručka")
+    other_price.prices = [ProductPrice(market="CZ", price=Decimal("199"), currency="CZK")]
+    edition = Product(name="Hravá abeceda", isbn="9788075631688")  # same name, another ISBN
+    db.add_all([tracked, other_price, edition])
+    db.commit()
+    feed = upload_fixture(client, "heureka.xml")
+    rows = {r["data"]["internal_id"]: r for r in feed["rows"]}
+    assert rows["3965"]["status"] == "update" and rows["3965"]["product_id"] == tracked.id
+    assert "Spárované podľa názvu a rovnakej ceny." in rows["3965"]["reason"]
+    assert rows["4058"]["status"] == "review"  # same name, different price: a person decides
+    assert rows["3"]["status"] == "ok"  # another edition: a new product
+    commit(client, feed)
+    db.expire_all()
+    tracked = db.get(Product, tracked.id)  # the same row (ID and its offers and history are kept)
+    assert (tracked.internal_id, tracked.isbn, tracked.source_kind) == ("3965", "9788077037372", "feed")
+    assert db.get(Product, other_price.id).internal_id is None
+
+
+def test_conflicting_identifiers_and_source_priority(client, db):
+    admin(client)
+    db.add_all([Product(name="A", internal_id="3"), Product(name="B", isbn="9788077034524")])
+    db.commit()
+    feed = upload_fixture(client, "heureka.xml")
+    row = next(r for r in feed["rows"] if r["data"]["internal_id"] == "3")
+    assert row["status"] == "review" and "patria rôznym produktom" in row["reason"]
+
+    db.execute(delete(Product))
+    db.commit()
+    commit(client, upload_fixture(client, "heureka.xml"))
+    cheaper = b"ID;Nazev;Cena Eshop\n3;Hrava abeceda;95\n"
+    # an uploaded file does not replace the price that came from the e-shop feed
+    batch = client.post("/api/imports", data={"kind": "products", "market": "CZ"},
+                        files={"file": ("ceny.csv", cheaper, "text/csv")}).json()
+    assert statuses(batch) == [(2, "unchanged")]
+    newer = (ETAKTIK / "heureka.xml").read_bytes().replace(b"<PRICE_VAT>92.00", b"<PRICE_VAT>95.00")
+    batch = client.post("/api/imports", data={"kind": "products", "market": "CZ"},
+                        files={"file": ("feed.xml", newer, "application/xml")}).json()
+    row = next(r for r in batch["rows"] if r["data"]["internal_id"] == "3")
+    assert row["status"] == "update" and "cena CZ 92.00 CZK → 95.00 CZK" in row["reason"]
 
 
 def test_rejects_unsafe_and_oversized_files(client):

@@ -20,9 +20,9 @@ const VAT_OPTIONS = [
 function initial(p?: Product): ProductInput & { priceRows: PriceRow[] } {
   return {
     name: p?.name ?? "", internal_id: p?.internal_id ?? null, isbn: p?.isbn ?? null, ean: p?.ean ?? null,
-    sku: p?.sku ?? null, brand: p?.brand ?? null, category: p?.category ?? null,
+    sku: p?.sku ?? null, brand: p?.brand ?? null, category: p?.category ?? null, url: p?.url ?? null,
     attributes: { subject: p?.attributes.subject ?? null, grade: p?.attributes.grade ?? null,
-                  type: p?.attributes.type ?? null },
+                  type: p?.attributes.type ?? null, year: p?.attributes.year ?? null },
     priority: p?.priority ?? "regular", tracking_status: p?.tracking_status ?? "active", prices: [],
     priceRows: p?.prices.map((x) => ({ market: x.market, price: x.price, currency: x.currency, vat_mode: x.vat_mode }))
       ?? [{ market: "SK", price: "", currency: "EUR", vat_mode: "with_vat" }],
@@ -39,11 +39,11 @@ export function ProductFormModal({ opened, onClose, product }: { opened: boolean
   }, [opened, product]);
 
   const set = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const text = (key: "name" | "internal_id" | "isbn" | "ean" | "sku" | "brand" | "category") => ({
+  const text = (key: "name" | "internal_id" | "isbn" | "ean" | "sku" | "brand" | "category" | "url") => ({
     value: form[key] ?? "",
     onChange: (e: ChangeEvent<HTMLInputElement>) => set(key, e.currentTarget.value),
   });
-  const attr = (key: "subject" | "grade" | "type") => ({
+  const attr = (key: "subject" | "grade" | "type" | "year") => ({
     value: form.attributes[key] ?? "",
     onChange: (e: ChangeEvent<HTMLInputElement>) =>
       set("attributes", { ...form.attributes, [key]: e.currentTarget.value }),
@@ -66,9 +66,9 @@ export function ProductFormModal({ opened, onClose, product }: { opened: boolean
     const blank = (v: string | null) => (v && v.trim() ? v.trim() : null);
     const payload: ProductInput = {
       name: form.name, internal_id: blank(form.internal_id), isbn: blank(form.isbn), ean: blank(form.ean),
-      sku: blank(form.sku), brand: blank(form.brand), category: blank(form.category),
+      sku: blank(form.sku), brand: blank(form.brand), category: blank(form.category), url: blank(form.url),
       attributes: { subject: blank(form.attributes.subject ?? null), grade: blank(form.attributes.grade ?? null),
-                    type: blank(form.attributes.type ?? null) },
+                    type: blank(form.attributes.type ?? null), year: blank(form.attributes.year ?? null) },
       priority: form.priority, tracking_status: form.tracking_status,
       prices: form.priceRows.filter((r) => r.market.trim() && r.price.trim()).map((r) => ({
         market: r.market.trim(), price: r.price.replace(",", ".").replace(/\s/g, ""), currency: blank(r.currency),
@@ -100,11 +100,14 @@ export function ProductFormModal({ opened, onClose, product }: { opened: boolean
             <TextInput label="Značka / vydavateľ" {...text("brand")} />
             <TextInput label="Kategória" {...text("category")} />
           </SimpleGrid>
+          <TextInput label="URL vo vlastnom e-shope" placeholder="https://www.etaktik.cz/…" maxLength={2048}
+                     {...text("url")} />
           <Divider label="Parametre pre párovanie s konkurenciou" labelPosition="left" />
-          <SimpleGrid cols={{ base: 1, sm: 3 }}>
+          <SimpleGrid cols={{ base: 2, sm: 4 }}>
             <TextInput label="Predmet" placeholder="matematika" {...attr("subject")} />
             <TextInput label="Ročník" placeholder="2" {...attr("grade")} />
             <TextInput label="Typ" placeholder="pracovný zošit" {...attr("type")} />
+            <TextInput label="Rok vydania" placeholder="2025" maxLength={10} {...attr("year")} />
           </SimpleGrid>
           <SimpleGrid cols={{ base: 1, sm: 2 }}>
             <Select label="Priorita sledovania" allowDeselect={false} value={form.priority}

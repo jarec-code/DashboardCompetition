@@ -37,11 +37,11 @@ test.describe.serial("Import ponúk a načítanie zo stránky kategórie", () =>
     await dialog.locator("input[type=file]").setInputFiles({ name: "ponuky.csv", mimeType: "text/csv",
                                                             buffer: Buffer.from(csv) });
     await dialog.getByRole("button", { name: "Načítať náhľad" }).click();
-    await expect(dialog.getByText("v poriadku: 2")).toBeVisible();
+    await expect(dialog.getByText("nový: 2")).toBeVisible();
     await expect(dialog.getByText(/nepatrí žiadnemu evidovanému konkurentovi/)).toBeVisible();
     await expect(dialog.getByText(/→ Sprievodca prvoukou \(import\)/)).toBeVisible();
-    await dialog.getByRole("button", { name: "Importovať 2 riadky" }).click();
-    await expect(dialog.getByText(/Importované:\s*2/)).toBeVisible();
+    await dialog.getByRole("button", { name: "Uložiť 2 riadky" }).click();
+    await expect(dialog.getByText(/nové:\s*2/)).toBeVisible();
     await dialog.getByRole("button", { name: "Zavrieť" }).click();
     await expect(rows(page)).toHaveCount(2);
     await expect(rows(page).filter({ hasText: "/produkt/716" }).getByRole("link", { name: "Sprievodca prvoukou (import)" }))

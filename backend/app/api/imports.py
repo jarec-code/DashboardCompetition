@@ -28,7 +28,11 @@ class BatchOut(BaseModel):
 
 
 class CommitOut(BaseModel):
+    processed: int
     imported: int
+    updated: int
+    unchanged: int
+    review: int
     duplicates: int
     errors: int
     skipped_at_commit: list[dict[str, Any]]
@@ -43,10 +47,12 @@ def _get(db, batch_id: int) -> ImportBatch:
 
 @router.post("", response_model=BatchOut, status_code=status.HTTP_201_CREATED)
 async def upload(file: UploadFile, db: DbSession, admin: AdminUser,
-                 kind: Literal["products", "offers"] = Form(...), competitor_id: int | None = Form(default=None)):
+                 kind: Literal["products", "offers"] = Form(...), competitor_id: int | None = Form(default=None),
+                 market: str | None = Form(default=None, max_length=16)):
     data = await file.read(imports.MAX_BYTES + 1)
     try:
-        batch = imports.preview(db, kind, data, file.filename or "import", admin.id, competitor_id)
+        batch = imports.preview(db, kind, data, file.filename or "import", admin.id, competitor_id,
+                                default_market=market)
     except imports.ImportFileError as exc:
         raise HTTPException(422, str(exc)) from None
     db.commit()

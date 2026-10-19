@@ -5,8 +5,9 @@ Only *.e2e.test hosts can be fetched, so no test ever loads a real website.
   python -m tests.e2e_server     (run from backend/; uses E2E_DATABASE_URL)
 
 The fake shop answers for hosts ending in ".e2e.test" (see SCRAPER_TEST_ORIGIN): it serves saved
-alter.cz pages from tests/fixtures/html/alter_cz, and GET /__set_price?id=1111&value=39,00 changes
-the price it serves, so a test can observe a price change.
+alter.cz pages from tests/fixtures/html/alter_cz and a sample of the etaktik.cz Heureka feed at
+/export/heureka.php, and GET /__set_price?id=1111&value=39,00 changes the price it serves, so a test can
+observe a price change.
 """
 import os
 import re
@@ -32,10 +33,14 @@ from app.db import SessionLocal, engine  # noqa: E402
 from app.models import User  # noqa: E402
 from app.security import hash_password  # noqa: E402
 from app.services import scheduling  # noqa: E402
+from app.worker import worker  # noqa: E402
+
+worker.CATALOG_CHECK_SECONDS = 1  # a requested catalogue sync starts at once
 
 USERS = [("admin@e2e.test", "admin"), ("viewer@e2e.test", "viewer")]
 PASSWORD = "e2e-heslo-12345"
 PAGES = Path(__file__).parent / "fixtures" / "html" / "alter_cz"
+FEED = Path(__file__).parent / "fixtures" / "etaktik" / "heureka.xml"
 PRICE_OVERRIDES: dict[str, str] = {}
 
 
@@ -61,6 +66,8 @@ class FakeShop(BaseHTTPRequestHandler):
             return self._send(200, "ok", "text/plain")
         if url.path == "/novinky":  # a listing page (saved alter.cz homepage) for the "from category page" helper
             return self._send(200, (PAGES / "home.html").read_text(encoding="utf-8"))
+        if url.path == "/export/heureka.php":
+            return self._send(200, FEED.read_text(encoding="utf-8"), "application/xml")
         if url.path.startswith("/produkt/"):
             product_id = url.path.rsplit("/", 1)[-1]
             page = PAGES / f"produkt_{product_id}.html"

@@ -19,6 +19,8 @@ import { METHOD_LABELS, PRIORITY_LABELS } from "./labels";
 import { ProductFormModal } from "./ProductFormModal";
 
 const VAT = { with_vat: "s DPH", without_vat: "bez DPH", unknown: "DPH neznáme" } as const;
+const AVAILABILITY = { in_stock: "skladom", out_of_stock: "nedostupné", preorder: "predpredaj", unknown: "neznáma" } as const;
+const SOURCE_KIND = { feed: "feed e-shopu", file: "importovaný súbor" } as const;
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -91,6 +93,19 @@ export function ProductDetailPage() {
               <div key={p.market}>{p.market}: <b>{formatMoney(p.price, p.currency)}</b> <Text span size="xs" c="dimmed">{VAT[p.vat_mode]}</Text></div>
             ))}
           </Field>
+          <Field label="Vo vlastnom e-shope">
+            {product.url ? <Anchor href={product.url} target="_blank" rel="noopener noreferrer" size="sm">
+              {product.url.replace(/^https?:\/\/(www\.)?/, "")}</Anchor> : "—"}
+            {product.image_url && <div><Anchor href={product.image_url} target="_blank" rel="noopener noreferrer"
+                                               size="xs">obrázok</Anchor></div>}
+          </Field>
+          <Field label="Dostupnosť">{AVAILABILITY[product.availability]}</Field>
+          <Field label="Zdroj údajov">
+            {product.source_kind ? <>{product.source} <Text span size="xs" c="dimmed">({SOURCE_KIND[product.source_kind]})</Text></>
+              : "zadané ručne"}
+            {product.source_synced_at && <Text size="xs" c="dimmed">načítané {formatDateTime(product.source_synced_at)}</Text>}
+          </Field>
+          <Field label="Rok vydania">{a.year ?? "—"}</Field>
           <Field label="Naposledy upravený">{formatDateTime(product.updated_at)}</Field>
         </SimpleGrid>
       </Paper>

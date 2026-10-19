@@ -495,6 +495,24 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
+### Doplnok: Evidencia vlastných produktov z etaktik.cz ✅ kód hotový 19. 10. 2026
+
+- **Zdroje:** verejný Heureka feed e-shopu (1 229 produktov, pokrýva všetky produktové URL zo sitemapy), Google
+  feed (CSV, dostupnosť), priložený export (parametre, ISBN). Analýza a výsledky: [ETAKTIK_IMPORT.md](ETAKTIK_IMPORT.md).
+- **Import produktov rozšírený, nie zdvojený:** párovanie interné ID → SKU → ISBN/EAN → URL → názov s rovnakou cenou;
+  nejednoznačné riadky na ručnú kontrolu; aktualizácia existujúcich podľa priority zdroja (feed > súbor > ručne);
+  identifikátory sa iba dopĺňajú; cena 0 sa neukladá; idempotentné. Nové stavy náhľadu: aktualizácia, bez zmeny,
+  na kontrolu.
+- **Pravidelná aktualizácia:** worker sťahuje nastavený feed raz za interval (alebo hneď po „Synchronizovať teraz“),
+  jedna požiadavka, robots.txt a SSRF ochrana ako pri scrapingu; výsledok a položky na kontrolu v Nastaveniach.
+- **Model:** migrácia `0007` (URL, obrázok, dostupnosť, zdroj, čas načítania produktu).
+- **Testy:** backend 335 passed (vrátane testov na reálnych vzorkách feedu, Google CSV a priloženého exportu,
+  opakovaných behov a konfliktov), Vitest 4, e2e 29 (nový test synchronizácie s falošným feedom).
+- **Skúška na reálnych dátach (lokálne):** 1 237 produktov, 0 duplicít, druhý beh bez zmien.
+- **Potrebné:** načítať katalóg v produkcii podľa ETAKTIK_IMPORT.md (zápis robí administrátor v aplikácii).
+
+---
+
 ### Etapa 10 (voliteľná): Playwright pre weby vyžadujúce JavaScript
 
 Iba ak niektorý konkurent neposkytuje dáta v HTML, JSON-LD ani feede.

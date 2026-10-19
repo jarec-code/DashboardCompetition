@@ -112,3 +112,15 @@ def test_viewer_read_only(client):
     assert client.post("/api/products", json=PRODUCT).status_code == 403
     assert client.patch(f"/api/products/{p['id']}", json={"name": "x"}).status_code == 403
     assert client.delete(f"/api/products/{p['id']}").status_code == 403
+
+
+def test_eshop_url_availability_and_source_fields(client):
+    admin(client)
+    p = create(client, url="https://WWW.etaktik.cz/hrava-matematika-2/#detail", availability="in_stock")
+    assert (p["url"], p["availability"], p["source_kind"], p["source_synced_at"]) == (
+        "https://www.etaktik.cz/hrava-matematika-2/", "in_stock", None, None)  # entered by hand
+    r = client.post("/api/products", json={**PRODUCT, "name": "Iný", "isbn": None,
+                                           "url": "https://www.etaktik.cz/hrava-matematika-2/"})
+    assert r.status_code == 409 and "URL" in r.json()["detail"]
+    assert client.post("/api/products", json={**PRODUCT, "url": "ftp://x.cz/a"}).status_code == 422
+    assert client.post("/api/products", json={**PRODUCT, "availability": "maybe"}).status_code == 422

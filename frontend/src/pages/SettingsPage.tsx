@@ -11,6 +11,7 @@ import { api } from "../api/client";
 import type { Role, User } from "../api/types";
 import { useSession } from "../auth/auth";
 import { AlertRulesSection } from "./AlertRulesSection";
+import { CatalogSyncSection } from "./CatalogSyncSection";
 import { PasswordSection } from "./PasswordSection";
 import { SchedulingSettingsSection } from "./SchedulingSettings";
 
@@ -136,6 +137,7 @@ export function SettingsPage() {
       )}
       <PasswordSection />
       <SchedulingSettingsSection readOnly={session.user.role !== "admin"} />
+      <CatalogSyncSection readOnly={session.user.role !== "admin"} />
       <AlertRulesSection readOnly={session.user.role !== "admin"} />
     </Stack>
   );

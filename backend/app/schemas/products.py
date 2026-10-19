@@ -6,10 +6,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.services.identifiers import normalize_ean, normalize_isbn, normalize_sku
+from app.services.urls import InvalidUrl, normalize_url
 
 Priority = Literal["strategic", "regular", "stable"]
 TrackingStatus = Literal["active", "paused"]
 VatMode = Literal["with_vat", "without_vat", "unknown"]
+Availability = Literal["in_stock", "out_of_stock", "preorder", "unknown"]
 
 _MARKET_RE = re.compile(r"^[A-Z0-9_-]{1,16}$")
 _CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
@@ -80,11 +82,12 @@ class ProductAttributes(BaseModel):
     """Parameters that help matching comparable titles across publishers."""
     model_config = ConfigDict(extra="forbid")
 
-    subject: str | None = Field(default=None, max_length=100)  # predmet
-    grade: str | None = Field(default=None, max_length=20)     # ročník
+    subject: str | None = Field(default=None, max_length=200)  # predmet (or several, comma separated)
+    grade: str | None = Field(default=None, max_length=200)    # ročník (or several)
     type: str | None = Field(default=None, max_length=100)     # učebnica, pracovný zošit…
+    year: str | None = Field(default=None, max_length=10)      # rok uvedenia na trh
 
-    _t = field_validator("subject", "grade", "type")(_text)
+    _t = field_validator("subject", "grade", "type", "year")(_text)
 
 
 class ProductFields(BaseModel):
@@ -98,11 +101,24 @@ class ProductFields(BaseModel):
     priority: Priority | None = None
     tracking_status: TrackingStatus | None = None
     prices: list[ProductPriceIn] | None = Field(default=None, max_length=20)
+    url: str | None = Field(default=None, max_length=2048)
+    image_url: str | None = Field(default=None, max_length=2048)
+    availability: Availability | None = None
 
     _t = field_validator("internal_id", "brand", "category")(_text)
     _i = field_validator("isbn")(_isbn)
     _e = field_validator("ean")(_ean)
     _s = field_validator("sku")(lambda v: normalize_sku(v))
+
+    @field_validator("url", "image_url")
+    @classmethod
+    def web_address(cls, value: str | None) -> str | None:
+        if not _text(value):
+            return None
+        try:
+            return normalize_url(value)
+        except InvalidUrl as exc:
+            raise ValueError(str(exc)) from None
 
     @field_validator("prices")
     @classmethod
@@ -159,6 +175,12 @@ class ProductOut(BaseModel):
     priority: str
     tracking_status: str
     prices: list[ProductPriceOut]
+    url: str | None
+    image_url: str | None
+    availability: str
+    source_kind: str | None
+    source: str | None
+    source_synced_at: datetime | None
     offer_count: int = 0
     created_at: datetime
     updated_at: datetime

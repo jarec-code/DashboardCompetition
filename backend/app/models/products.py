@@ -7,13 +7,17 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
-from app.models.base import VAT_MODES, TimestampMixin, one_of
+from app.models.base import AVAILABILITY, VAT_MODES, TimestampMixin, one_of
 
 PRIORITIES = ("strategic", "regular", "stable")
 TRACKING_STATUSES = ("active", "paused")
 OFFER_STATUSES = ("active", "paused", "archived")
 MATCH_STATUSES = ("matched", "pending_review", "unmatched", "ignored")
 MATCHING_METHODS = ("identifier", "name", "manual", "ai")
+# Where the product data came from, by trust: a feed of our own e-shop beats an uploaded file, which beats
+# data entered by hand before any import (NULL). Imports overwrite filled fields only from an equal or better source.
+SOURCE_KINDS = ("file", "feed")
+SOURCE_RANK = {None: 0, "file": 1, "feed": 2}
 
 
 class Product(TimestampMixin, Base):
@@ -22,6 +26,8 @@ class Product(TimestampMixin, Base):
     __table_args__ = (
         one_of("priority", PRIORITIES, "ck_products_priority"),
         one_of("tracking_status", TRACKING_STATUSES, "ck_products_tracking"),
+        one_of("availability", AVAILABILITY, "ck_products_availability"),
+        one_of("source_kind", SOURCE_KINDS, "ck_products_source_kind"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -36,6 +42,12 @@ class Product(TimestampMixin, Base):
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     priority: Mapped[str] = mapped_column(String(16), default="regular")
     tracking_status: Mapped[str] = mapped_column(String(16), default="active")
+    url: Mapped[str | None] = mapped_column(String(2048), unique=True)  # product page in our own e-shop
+    image_url: Mapped[str | None] = mapped_column(String(2048))
+    availability: Mapped[str] = mapped_column(String(16), default="unknown", server_default="unknown")
+    source_kind: Mapped[str | None] = mapped_column(String(16))
+    source: Mapped[str | None] = mapped_column(String(255))  # e.g. "etaktik.cz (feed)" or the file name
+    source_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # last successful load
 
     prices: Mapped[list["ProductPrice"]] = relationship(cascade="all, delete-orphan", order_by="ProductPrice.market",
                                                         lazy="selectin")

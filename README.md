@@ -99,7 +99,8 @@ Vzor je v [.env.example](.env.example); skutočné heslá nikdy nepatria do repo
 - Nová migrácia po zmene modelov: `.venv/bin/alembic revision --autogenerate -m "popis"`, výsledok vždy
   skontrolujte (Alembic nezachytí zmeny CHECK obmedzení ani dáta).
 - Migrácie: `0001` jadro schémy, `0002` unikátne identifikátory, `0003` plánovanie a monitoring, `0004`
-  upozornenia s predvolenými pravidlami, `0005` importy, `0006` verzia relácie.
+  upozornenia s predvolenými pravidlami, `0005` importy, `0006` verzia relácie, `0007` URL, obrázok, dostupnosť
+  a zdroj údajov vlastného produktu.
 
 ## Práca s aplikáciou
 
@@ -115,10 +116,28 @@ podmienky používania; aplikácia rešpektuje robots.txt a nikdy neobchádza oc
 vybrať odkazy zo stránky kategórie) alebo Import zo súboru. Ponuky priradíte k vlastným produktom tlačidlom
 s reťazou; zhoda ISBN/EAN/SKU sa priradí automaticky, podobné názvy čakajú v Produkty → Párovanie.
 
-**Import produktov.** Produkty → Import: CSV (UTF-8 aj Windows-1250), Excel .xlsx alebo XML feed (Heureka,
-Google Merchant). Povinné stĺpce `name` a `price`, voliteľné `market`, `currency`, `isbn`, `ean`, `sku`,
-`internal_id`, `brand`, `category`, `priority`. Najprv sa zobrazí náhľad so stavom každého riadku, uloží sa až
-po potvrdení; existujúce produkty sa neprepisujú.
+**Vlastné produkty z feedu e-shopu.** Nastavenia → Vlastné produkty z feedu e-shopu: adresa feedu
+(pre etaktik.cz `https://www.etaktik.cz/export/heureka.php`), trh `CZ`, interval 24 h, zapnúť „Automaticky“.
+Tlačidlo „Synchronizovať teraz“ požiada worker o okamžitý beh (do pol minúty). Každý beh stiahne feed jednou
+požiadavkou, pridá nové produkty, aktualizuje ceny, URL, obrázky, kategórie a dostupnosť existujúcich a pod
+výsledkom vypíše položky na ručnú kontrolu. Postup a výsledky prvého načítania: [docs/ETAKTIK_IMPORT.md](docs/ETAKTIK_IMPORT.md).
+
+**Import produktov zo súboru.** Produkty → Import: CSV (UTF-8 aj Windows-1250), Excel .xlsx alebo XML feed
+(Heureka, Google Merchant). Povinný stĺpec `name`; ďalej `price`, `market`, `currency`, `isbn`, `ean`, `sku`,
+`internal_id` (alebo `ID`), `url`, `brand`, `category`, `availability`, `priority`. Rozpozná aj export z vlastného
+systému (Název, ISBN, EAN, Cena Eshop, Druh produktu, Ročníky, Předměty, Rok uvedení na trh). Pre riadky bez meny
+sa vyberie trh. Najprv sa zobrazí náhľad so stavom každého riadku (nový, aktualizácia, bez zmeny, na kontrolu,
+duplicita, chyba); uloží sa až po potvrdení.
+
+Pravidlá párovania a aktualizácie (feed aj súbor):
+- Existujúci produkt sa hľadá podľa interného ID, SKU, ISBN/EAN a URL. Samotný názov stačí iba vtedy, keď sa zhoduje
+  aj cena na danom trhu a produkty si neodporujú v identifikátoroch; inak riadok čaká na ručnú kontrolu (doplňte
+  produktu interné ID alebo ISBN a import zopakujte). Rovnaký názov s iným ISBN je iné vydanie, teda nový produkt.
+- Identifikátory sa iba dopĺňajú, nikdy neprepisujú. Ostatné údaje prepíše iba zdroj aspoň taký dôveryhodný, ako
+  ten, ktorý ich uložil: feed e-shopu > importovaný súbor > ručne zadané pred prvým importom. Súbor teda údaje
+  z feedu iba doplní. ID produktu, jeho ponuky konkurentov a cenová história ostávajú.
+- Neplatné ISBN/EAN sa ignorujú s upozornením. Cena 0 sa neukladá (produkt je bez ceny); riadok bez ceny a bez URL,
+  ktorý nezodpovedá existujúcemu produktu, sa odmietne. Opakovaný import nič nezduplikuje.
 
 **Manuálna kontrola.** V zozname ponúk tlačidlo „Skontrolovať teraz“ (administrátor). Výsledok sa ohlási,
 priebeh je v Aktualizácie a logy.
