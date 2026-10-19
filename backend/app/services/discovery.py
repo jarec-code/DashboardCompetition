@@ -702,11 +702,19 @@ class Runner:
             self._seed()
         if self.run.stats.get("limit_hit"):
             return None
-        row = self.db.scalar(select(DiscoveryUrl).where(
-            DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.run_id == self.run.id,
-            DiscoveryUrl.status == "queued").order_by(DiscoveryUrl.priority, DiscoveryUrl.depth, DiscoveryUrl.id))
-        if row is None:
-            return None
+        stats = self._template_stats()
+        while True:
+            row = self.db.scalar(select(DiscoveryUrl).where(
+                DiscoveryUrl.competitor_id == self.competitor.id, DiscoveryUrl.run_id == self.run.id,
+                DiscoveryUrl.status == "queued").order_by(DiscoveryUrl.priority, DiscoveryUrl.depth, DiscoveryUrl.id))
+            if row is None:
+                return None
+            if row.depth == 0 or not crawl.dead(row.template, stats):
+                break
+            # Queued before its page type proved to have no products (e.g. "how to order" pages with a product
+            # parameter): skipped without a request.
+            row.status, row.error = "skipped", "Preskočené: stránky tohto typu nie sú produkty ani zoznamy."
+            self._stat("dead_links")
         limit = None
         if self.run.stats.get("pages", 0) >= self.settings.max_pages:
             limit = f"dosiahnutý limit {self.settings.max_pages} stránok na beh"

@@ -574,3 +574,19 @@ def test_forbidden_on_several_pages_in_a_row_means_blocking(db):
     assert settings_of(db, c).paused_until is not None
     pages = [r for r in site.requests if r not in ("/robots.txt", "/sitemap.xml", "/")]
     assert len(pages) == 3  # three different pages closed in a row: the website blocks us
+
+
+def test_queued_pages_of_a_type_without_products_are_skipped(db):
+    competitor(db, "Nakladatel", "https://knihy.example.cz/", "knihy.example.cz")
+    # "How to order" pages carry a product parameter, so they look like products and are queued first.
+    order_pages = "".join(f'<a href="/index.php?cast=1&id_katalog={n}">Jak objednat</a>' for n in range(1, 21))
+    books = "".join(f'<a href="/index.php?zobraz=detail&id_katalog={n}">Kniha {n}</a>' for n in range(1, 6))
+    site = FakeSite({
+        "/robots.txt": (200, "User-agent: *\n"), "/": (200, order_pages + books),
+        **{f"/index.php?cast=1&id_katalog={n}": (200, "<h1>Jak objednávat</h1>") for n in range(1, 21)},
+        **{f"/index.php?id_katalog={n}&zobraz=detail": (200, jsonld_page(f"Kniha {n}", str(100 + n)))
+           for n in range(1, 6)},
+    })
+    run = run_all(db, site)
+    order_reads = [r for r in site.requests if r.startswith("/index.php?cast=1")]
+    assert len(order_reads) == 5 and run.stats["found"] == 5  # after five such pages the rest is skipped
