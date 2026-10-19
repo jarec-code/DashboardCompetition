@@ -474,7 +474,16 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
-### Etapa 9: Bezpečnosť, výkon, dokumentácia, overenie
+### Etapa 9: Bezpečnosť, výkon, dokumentácia, overenie ✅ nasadené 19. 10. 2026
+
+**Stav:**
+- **Bezpečnosť:** testy nad všetkými API operáciami (prihlásenie, rola čitateľa, CSRF) zostavené z OpenAPI schémy, takže nový nechránený endpoint zlyhá v CI; CSP a `Permissions-Policy`; neočakávané chyby bez detailov; zmena vlastného hesla v Nastaveniach; verzia relácie (migrácia `0006`) – zmena hesla, reset alebo deaktivácia ukončí ostatné prihlásenia (po nasadení sa všetci raz musia prihlásiť znova). `pip-audit` a `npm audit` bez nálezov.
+- **Opravená chyba:** `ON CONFLICT` s čiastočným indexom používal viazaný parameter; po 5. vykonaní (prepared statement v psycopg) PostgreSQL index nenašiel. Predikát je teraz literál, s regresnými testmi (fronta úloh, upozornenia).
+- **Výkon (lokálne, 2 000 produktov, 6 000 ponúk):** porovnanie ~330 ms na stránku; hromadné vyhodnotenie upozornení 7,8 s → 0,24 s.
+- **Retencia:** každých 6 h sa mažú dokončené úlohy staršie ako 30 dní, importy staršie ako 30 dní (nepotvrdené náhľady po 1 dni) a vyriešené upozornenia staršie ako 180 dní. História cien a behy sa nemažú.
+- **Dokumentácia:** `README.md` v slovenčine (spustenie, premenné, migrácie, práca s aplikáciou, Railway, diagnostika, záloha a obnova). Záloha/obnova overená lokálne s `pg_dump`/`pg_restore` 18.
+- **Overenie v produkcii:** [docs/ACCEPTANCE.md](ACCEPTANCE.md) – kritériá 1, 3–5, 7, 9, 11–14 overené na Railway s reálnymi dátami; 2 (úprava, pozastavenie, archivácia), 6 (zmena ceny), 8 a 10 automatizovanými testami.
+- **Testy:** backend 321 passed, Vitest 4 passed, e2e 28 passed, CI `success`.
 
 **Rozsah:**
 - Bezpečnostná kontrola: SSRF testy so všetkými rozsahmi, limit prihlásení (ochrana proti hádaniu hesla), bezpečnostné HTTP hlavičky, logy bez hesiel a tokenov, chyby bez stack trace pre používateľa, kontrola závislostí (pip-audit, npm audit).
