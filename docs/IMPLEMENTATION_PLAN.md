@@ -452,7 +452,15 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
-### Etapa 8: Import produktov a URL
+### Etapa 8: Import produktov a URL ✅ kód hotový 19. 10. 2026
+
+**Stav:**
+- **Vytvorené:** migrácia `0005` (`import_batches`, druh úlohy `discover`), `services/imports.py` (CSV v UTF-8 aj Windows-1250 s oddeľovačom čiarka/bodkočiarka/tab, Excel .xlsx cez openpyxl, XML feedy Heureka a Google Merchant cez defusedxml so zákazom DTD; jednotné mapovanie slovenských, českých aj anglických názvov stĺpcov; limit 5 MB a 10 000 riadkov; stav každého riadku ok / s upozornením / duplicita / chyba s konkrétnym dôvodom; duplicity voči databáze aj v rámci súboru; pri potvrdení sa duplicity overia znova), import produktov aj ponúk (URL musí patriť evidovanému alebo vybranému konkurentovi; priradenie k produktu cez `product_isbn` / `product_ean` / `product_sku` / `product_id` / `product_name`; nenájdený produkt = upozornenie a ponuka sa pridá nepriradená), API `POST /imports`, `GET /imports/{id}`, `POST /imports/{id}/commit`, `POST /imports/{id}/discard`; pomocník **Zo stránky kategórie** (`POST /competitors/{id}/discover` ako úloha workera: jedna zadaná stránka, robots.txt, rozostup, SSRF; odkazy iba z domény konkurenta, bez košíka, prihlásenia a galérií; zoradené podľa toho, či vyzerajú ako produkt; pri všeobecnom texte odkazu („Více informací“) sa použije text karty; už sledované URL označené). Pôvodný jednoduchý CSV import (`/products/import`) nahradený.
+- **UI:** spoločný sprievodca importom (nahratie → náhľad so stavom a dôvodom každého riadku, filter „iba problémy“ → potvrdenie → výsledok), Import v Produktoch, Import zo súboru a záložka Zo stránky kategórie pri ponukách konkurenta.
+- **Testy (skutočný výstup):** backend 210 passed (11 nových: CSV s rôznymi chybami, opätovná kontrola pri potvrdení, zrušenie, Excel, Heureka, Google, odmietnutie XXE a príliš veľkých súborov, import ponúk s priradením, oprávnenia, pomocník na uloženej stránke alter.cz, text karty, úloha workera), Vitest 4 passed, Playwright e2e 28 passed (upravený import produktov s náhľadom; 2 nové: import ponúk s priradením podľa EAN, pomocník zo stránky kategórie).
+- **Zistenia:** na alter.cz stránky kategórií neodkazujú na produktové stránky (iba na dialóg košíka), pomocník tam preto nič nenájde; funguje na úvodnej stránke a výpisoch, ktoré odkazy `/produkt/…` obsahujú. Heureka feed neobsahuje menu – pri importe produktov z neho treba trh doplniť (zatiaľ cez CSV/Excel so stĺpcom `market`).
+
+### Etapa 8: Import produktov a URL (pôvodný rozsah)
 
 **Rozsah:**
 - Migrácia `import_batches`. Dvojkrokový tok: nahratie → náhľad s validáciou a označením duplicít → potvrdenie.

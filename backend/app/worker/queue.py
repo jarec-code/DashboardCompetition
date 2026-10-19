@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.models import ScrapeJob, ScrapeRun
 
-PRIORITY = {"test": 10, "manual": 20, "scheduled": 100}  # lower runs first
+PRIORITY = {"test": 10, "discover": 15, "manual": 20, "scheduled": 100}  # lower runs first
 MAX_ATTEMPTS_AFTER_CRASH = 3
 
 

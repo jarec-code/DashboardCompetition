@@ -94,6 +94,24 @@ def test_competitor(competitor_id: int, data: TestCheckIn, db: DbSession, _admin
     return job
 
 
+@router.post("/competitors/{competitor_id}/discover", response_model=JobOut, status_code=status.HTTP_202_ACCEPTED)
+def discover(competitor_id: int, data: TestCheckIn, db: DbSession, _admin: AdminUser) -> ScrapeJob:
+    """Read product links from one listing page of the competitor (nothing is saved; the user picks)."""
+    competitor = db.get(Competitor, competitor_id)
+    if competitor is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Konkurent neexistuje.")
+    try:
+        url = normalize_url(data.url)
+    except InvalidUrl as exc:
+        raise HTTPException(422, str(exc)) from None
+    domain = domain_of(url)
+    if domain != competitor.domain and not domain.endswith("." + competitor.domain):
+        raise HTTPException(422, f"URL nepatrí doméne konkurenta ({competitor.domain}).")
+    job = queue.enqueue(db, competitor.id, "discover", url=url)
+    db.commit()
+    return job
+
+
 @router.get("/jobs/{job_id}", response_model=JobOut)
 def get_job(job_id: int, db: DbSession, _user: CurrentUser) -> ScrapeJob:
     job = db.get(ScrapeJob, job_id)

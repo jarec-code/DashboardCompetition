@@ -59,6 +59,8 @@ class FakeShop(BaseHTTPRequestHandler):
             params = parse_qs(url.query)
             PRICE_OVERRIDES[params["id"][0]] = params["value"][0]
             return self._send(200, "ok", "text/plain")
+        if url.path == "/novinky":  # a listing page (saved alter.cz homepage) for the "from category page" helper
+            return self._send(200, (PAGES / "home.html").read_text(encoding="utf-8"))
         if url.path.startswith("/produkt/"):
             product_id = url.path.rsplit("/", 1)[-1]
             page = PAGES / f"produkt_{product_id}.html"

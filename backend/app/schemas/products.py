@@ -162,14 +162,3 @@ class ProductOut(BaseModel):
     offer_count: int = 0
     created_at: datetime
     updated_at: datetime
-
-
-class ImportRowIssue(BaseModel):
-    row: int
-    reason: str
-
-
-class ImportResult(BaseModel):
-    imported: int
-    duplicates: list[ImportRowIssue]
-    errors: list[ImportRowIssue]

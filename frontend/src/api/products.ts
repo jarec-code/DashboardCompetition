@@ -1,6 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { api, ApiError, getCsrfToken, query } from "./client";
+import { api, query } from "./client";
 import type { Page, VatMode } from "./competitors";
 
 export type Priority = "strategic" | "regular" | "stable";
@@ -51,12 +51,6 @@ export interface ProductInput {
   prices: { market: string; price: string; currency: string | null; vat_mode: VatMode }[];
 }
 
-export interface ImportResult {
-  imported: number;
-  duplicates: { row: number; reason: string }[];
-  errors: { row: number; reason: string }[];
-}
-
 export interface ProductListParams {
   q?: string;
   priority?: string;
@@ -102,24 +96,6 @@ export function useDeleteProduct() {
   const invalidate = useInvalidate();
   return useMutation({
     mutationFn: (id: number) => api<void>(`/products/${id}`, { method: "DELETE" }),
-    onSuccess: invalidate,
-  });
-}
-
-/** Multipart upload; the shared JSON client is not used here. */
-export function useImportProducts() {
-  const invalidate = useInvalidate();
-  return useMutation({
-    mutationFn: async (file: File) => {
-      const body = new FormData();
-      body.append("file", file);
-      const response = await fetch("/api/products/import", {
-        method: "POST", body, credentials: "same-origin", headers: { "X-CSRF-Token": getCsrfToken() ?? "" },
-      });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new ApiError(response.status, data?.detail ?? `Import zlyhal (${response.status}).`);
-      return data as ImportResult;
-    },
     onSuccess: invalidate,
   });
 }

@@ -87,7 +87,7 @@ function ProductList() {
         </Group>
         {isAdmin && (
           <Group>
-            <Button variant="default" leftSection={<IconFileImport size={16} />} onClick={importer.open}>Import CSV</Button>
+            <Button variant="default" leftSection={<IconFileImport size={16} />} onClick={importer.open}>Import</Button>
             <Button leftSection={<IconPlus size={16} />} onClick={form.open}>Pridať produkt</Button>
           </Group>
         )}

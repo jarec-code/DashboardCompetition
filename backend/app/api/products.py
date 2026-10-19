@@ -1,16 +1,15 @@
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import Select, exists, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.api.deps import AdminUser, CurrentUser, DbSession
 from app.models import CompetitorProduct, Product, ProductPrice
 from app.schemas.common import Page
-from app.schemas.products import ImportResult, ProductCreate, ProductOut, ProductUpdate
+from app.schemas.products import ProductCreate, ProductOut, ProductUpdate
 from app.services import alerts, matching, scheduling
 from app.services.identifiers import normalize_ean, normalize_isbn, normalize_sku
-from app.services.product_import import MAX_BYTES, ProductImportError, import_products_csv
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -115,19 +114,6 @@ def create_product(data: ProductCreate, db: DbSession, _admin: AdminUser) -> Pro
     matching.rematch_open_offers(db)  # a new product may resolve offers waiting for a match
     db.commit()
     return _out(product, 0)
-
-
-@router.post("/import", response_model=ImportResult)
-async def import_products(file: UploadFile, db: DbSession, _admin: AdminUser) -> ImportResult:
-    data = await file.read(MAX_BYTES + 1)
-    try:
-        result = import_products_csv(db, data)
-    except ProductImportError as exc:
-        raise HTTPException(422, str(exc)) from None
-    if result.imported:
-        matching.rematch_open_offers(db)
-        db.commit()
-    return result
 
 
 @router.get("/{product_id}", response_model=ProductOut)

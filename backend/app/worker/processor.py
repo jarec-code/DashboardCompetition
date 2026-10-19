@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Competitor, CompetitorProduct, CurrentPrice, ScrapeJob, ScrapeRun
+from app.scraping.discover import discover_links
 from app.scraping.fetcher import Fetcher, FetchError
 from app.scraping.parsers.base import PageContext, ParseError
 from app.scraping.parsers.registry import get_parser
@@ -81,7 +82,7 @@ class Processor:
         now = datetime.now(UTC)
         max_retries = competitor.scrape_config.max_retries if competitor else 0
         will_retry = job.kind == "scheduled" and kind == "temporary" and job.attempt_count <= max_retries
-        if offer is not None and job.kind != "test":
+        if offer is not None and job.kind not in ("test", "discover"):
             pricing.record_failure(db, offer, competitor, error, now, final=not will_retry)
             db.flush()
             alerts.evaluate_offer(db, offer)
@@ -103,7 +104,7 @@ class Processor:
             raise Skip("Konkurent neexistuje.")
         if competitor.status == "archived":
             raise Skip("Konkurent je archivovaný, kontroly sa nevykonávajú.")
-        if job.kind != "test" and offer is None:
+        if job.kind not in ("test", "discover") and offer is None:
             raise Skip("Ponuka neexistuje.")
         if job.kind == "scheduled":
             if competitor.status != "active":
@@ -117,7 +118,7 @@ class Processor:
         config = competitor.scrape_config
         spec = get_parser(config.parser_type)
         url = job.url or offer.product_url
-        variant = (job.result or {}).get("variant", "") if job.kind == "test" else offer.variant
+        variant = (job.result or {}).get("variant", "") if job.kind in ("test", "discover") else offer.variant
         domain = urlsplit(url).hostname or ""
 
         if not self.fetcher.robots_cached(url):
@@ -135,6 +136,11 @@ class Processor:
         observed_at = datetime.now(UTC)
         result = {"url": url, "final_url": fetched.url, "http_status": fetched.status, "elapsed_ms": fetched.elapsed_ms,
                   "parser": spec.code_version, "parser_config_version": config.parser_version, "variant": variant}
+        if job.kind == "discover":
+            tracked = set(db.scalars(select(CompetitorProduct.product_url).where(
+                CompetitorProduct.competitor_id == competitor.id)))
+            candidates = discover_links(fetched.text or "", fetched.url, competitor.domain, tracked)
+            return {**result, "candidates": candidates}
 
         if fetched.not_modified:
             pricing.record_not_modified(db, offer, observed_at)

@@ -7,7 +7,19 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from starlette.middleware.sessions import SessionMiddleware
 
-from app.api import alerts, auth, comparison, competitors, history, jobs, monitoring, offers, products, users
+from app.api import (
+    alerts,
+    auth,
+    comparison,
+    competitors,
+    history,
+    imports,
+    jobs,
+    monitoring,
+    offers,
+    products,
+    users,
+)
 from app.api.deps import csrf_protect
 from app.config import get_settings
 from app.db import engine
@@ -57,6 +69,7 @@ api.include_router(monitoring.router)
 api.include_router(comparison.router)
 api.include_router(history.router)
 api.include_router(alerts.router)
+api.include_router(imports.router)
 app.include_router(auth.router, prefix="/api")  # login works without a CSRF token; others check it
 app.include_router(api)
 

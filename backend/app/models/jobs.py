@@ -10,7 +10,7 @@ from app.models.base import one_of, utc_now_column
 
 RUN_STATUSES = ("running", "succeeded", "partial", "failed")
 RUN_TRIGGERS = ("scheduled", "manual")
-JOB_KINDS = ("scheduled", "manual", "test")
+JOB_KINDS = ("scheduled", "manual", "test", "discover")
 JOB_STATUSES = ("pending", "running", "succeeded", "failed", "cancelled")
 ERROR_KINDS = ("temporary", "permanent")
 

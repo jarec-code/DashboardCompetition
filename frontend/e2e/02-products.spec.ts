@@ -45,16 +45,21 @@ test.describe.serial("Produkty a ponuky", () => {
     await expect(page.getByText(/CZ:\s*114,00\s*(Kč|CZK)/)).toBeVisible();
   });
 
-  test("import produktov z CSV", async ({ page }) => {
+  test("import produktov z CSV s náhľadom", async ({ page }) => {
     await login(page);
-    await page.getByRole("button", { name: "Import CSV" }).click();
-    const dialog = page.getByRole("dialog", { name: "Import produktov z CSV" });
+    await page.getByRole("button", { name: "Import", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Import vlastných produktov" });
     const csv = "name;price;currency\nNaše vlast – pracovní listy;44,00;CZK\nDetektiv Písmenko 5;159;CZK\nBez ceny;;CZK\n";
     await dialog.locator("input[type=file]").setInputFiles({ name: "produkty.csv", mimeType: "text/csv",
                                                             buffer: Buffer.from(csv) });
-    await dialog.getByRole("button", { name: "Importovať" }).click();
+    await dialog.getByRole("button", { name: "Načítať náhľad" }).click();
+    await expect(dialog.getByText("v poriadku: 2")).toBeVisible();
+    await expect(dialog.getByText("chyba: 1")).toBeVisible();
+    await expect(dialog.getByText("Chýba cena.")).toBeVisible();
+    const list = page.getByRole("tabpanel", { name: "Vlastné produkty" }).locator("tbody tr");
+    await expect(list).toHaveCount(1);                        // nothing saved before confirming
+    await dialog.getByRole("button", { name: "Importovať 2 riadky" }).click();
     await expect(dialog.getByText(/Importované:\s*2/)).toBeVisible();
-    await expect(dialog.getByText(/Riadok 4: Neplatná cena/)).toBeVisible();
     await dialog.getByRole("button", { name: "Zavrieť" }).click();
     await expect(rows(page)).toHaveCount(3);
 
