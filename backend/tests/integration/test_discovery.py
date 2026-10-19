@@ -713,3 +713,12 @@ def test_a_temporarily_unavailable_website_is_paused_for_a_day_only(db):
     assert run.status == "stopped" and "dočasne nedostupný" in run.error
     paused = settings_of(db, c).paused_until - datetime.now(UTC)
     assert timedelta(hours=23) < paused < timedelta(hours=25)
+
+
+def test_a_website_drawn_by_javascript_is_reported_as_such(db):
+    competitor(db, "Didaktis", "https://www.didaktis.example.cz/", "didaktis.example.cz")
+    shell = (Path(__file__).parent.parent / "fixtures" / "html" / "didaktis_home.html").read_text(encoding="utf-8")
+    site = FakeSite({"/robots.txt": (200, "User-agent: *\nDisallow: /Data/\n"), "/": (200, shell)})
+    run = run_all(db, site)
+    assert run.status == "failed" and "JavaScriptom" in run.error and run.stats["js_app"] is True
+    assert any("JavaScript" in a["result"] for a in run.stats["attempts"])

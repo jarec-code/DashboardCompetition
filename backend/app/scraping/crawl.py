@@ -86,3 +86,14 @@ def priority(url: str, stats: dict[str, dict[str, int]], pattern: str | None = N
     if not known or not known["pages"]:
         return PRIORITY_UNKNOWN
     return PRIORITY_LISTING if known["listings"] else PRIORITY_INFO
+
+
+def looks_like_js_app(html: str) -> bool:
+    """A page whose content is drawn by JavaScript: almost no visible text and no links, but scripts
+    (e.g. "<div id=app>Loading…</div>" of a single-page application). HTTP methods cannot read such a site."""
+    soup = BeautifulSoup(html, "html.parser")
+    scripts = len(soup.find_all("script"))
+    for tag in soup(["script", "style", "noscript", "title"]):
+        tag.decompose()
+    text = " ".join(soup.get_text(" ").split())
+    return scripts >= 1 and len(soup.find_all("a", href=True)) < 3 and len(text) < 200

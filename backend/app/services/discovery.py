@@ -791,6 +791,9 @@ class Runner:
         html = response.text or ""
         links = crawl.page_links(html, response.url, self._domains(), self._drop(), self.settings.include_patterns,
                                  self.settings.exclude_patterns)
+        if row.depth == 0 and not links and crawl.looks_like_js_app(html):
+            self._set_stats(js_app=True)
+            self._attempt(urlsplit(url).path or "/", "stránka bez odkazov a textu, obsah vykresľuje JavaScript")
         stats = self._template_stats()
         product_links = [link for link in links if crawl.product_like(link, stats, self.settings.product_pattern)]
         data, _ = self._parse_product(html, response.url)
@@ -927,6 +930,11 @@ class Runner:
             DiscoveryRun.competitor_id == self.competitor.id, DiscoveryRun.kind == "discovery",
             DiscoveryRun.status == "succeeded", DiscoveryRun.id != self.run.id).order_by(DiscoveryRun.id.desc()))
         before = (previous.stats or {}).get("found") if previous else None
+        if found == 0 and self.run.stats.get("js_app"):
+            raise Stop("Web vykresľuje obsah až JavaScriptom v prehliadači (stránka bez odkazov a textu), preto ho "
+                       "nemožno načítať ani prechádzaním odkazov. Produkty by bolo možné získať iba vykreslením v "
+                       "prehliadači (etapa 5 plánu) alebo z iného zdroja (feed). Nič sa neoznačilo ako zmiznuté.",
+                       status="failed")
         if found == 0:
             raise Stop("Zdroj nevrátil žiadne produkty. Nič sa neoznačilo ako zmiznuté; skontrolujte nastavenie "
                        "zdroja alebo či web nezmenil štruktúru.")
