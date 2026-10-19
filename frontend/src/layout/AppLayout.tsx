@@ -26,7 +26,7 @@ export function AppLayout() {
         <Group h="100%" px="md" justify="space-between" wrap="nowrap">
           <Group gap="sm" wrap="nowrap">
             <Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" aria-label="Menu" />
-            <Text fw={700}>Sledovanie cien</Text>
+            <Text fw={700}>WebIndex</Text>
           </Group>
           {session && (
             <Group gap="sm" wrap="nowrap">

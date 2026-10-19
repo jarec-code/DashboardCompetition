@@ -1,10 +1,10 @@
-# Sledovanie cien konkurencie
+# WebIndex – sledovanie cien konkurencie
 
 Webová aplikácia, ktorá automaticky sleduje ceny produktov v konkurenčných e-shopoch, uchováva históriu
 skutočných zmien, porovnáva ich s vlastnými cenami a upozorňuje na dôležité udalosti. Bežná prevádzka
 nepoužíva žiadnu AI ani AI tokeny.
 
-- Produkcia: https://dashboardcompetition-production.up.railway.app
+- Produkcia: https://webindex.up.railway.app
 - Plán a stav etáp: [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md)
 - Parser pre nový web: [docs/SCRAPER_GUIDE.md](docs/SCRAPER_GUIDE.md)
 - Overenie akceptačných kritérií: [docs/ACCEPTANCE.md](docs/ACCEPTANCE.md)

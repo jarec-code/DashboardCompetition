@@ -1,6 +1,6 @@
 # Overenie akceptačných kritérií (kap. 19 zadania)
 
-Overené 19. 10. 2026 na https://dashboardcompetition-production.up.railway.app (nasadenie `249fefe2`, commit
+Overené 19. 10. 2026 na https://webindex.up.railway.app (nasadenie `249fefe2`, commit
 `9eb1d10`, migrácia `0006`) a automatizovanými testami toho istého commitu.
 
 Produkčné dáta v čase overenia: 1 konkurent (Alter, alter.cz, parser `alter_cz`), 1 sledovaná ponuka

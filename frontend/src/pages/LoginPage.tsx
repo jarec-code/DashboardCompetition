@@ -19,7 +19,7 @@ export function LoginPage() {
       <Paper withBorder shadow="sm" p="xl" radius="md" w="100%" maw={380}>
         <form onSubmit={submit}>
           <Stack>
-            <Title order={2} size="h3">Sledovanie cien</Title>
+            <Title order={2} size="h3">WebIndex</Title>
             {login.error && (
               <Alert color="red" icon={<IconAlertCircle size={18} />} role="alert">
                 {login.error.message}

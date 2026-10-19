@@ -238,7 +238,7 @@ Každá etapa obsahuje aj vlastné testy a nasadenie. Etapa 9 nie je jediné mie
 
 ### Etapa 1: Základ aplikácie ✅ nasadené 18. 10. 2026
 
-**Nasadenie (overené na https://dashboardcompetition-production.up.railway.app):**
+**Nasadenie (overené na https://webindex.up.railway.app):**
 - Existujúca služba `DashboardCompetition` bola prepnutá na novú aplikáciu (stará Flask aplikácia sa už nenasadzuje). Pridaný PostgreSQL (`Postgres-Gcn3`), `DATABASE_URL` odkazuje naň.
 - Docker build z `deploy/Dockerfile` prešiel. Railway `preDeployCommand` sa nespustil, preto migrácie a prvý admin bežia pri štarte kontajnera pod pg advisory lockom.
 - Overené: `/readyz` 200, React aplikácia sa načíta, prihlásenie (zlé heslo 401, správne 200), zoznam používateľov, `Secure` cookie, CSRF pri odhlásení, HSTS a ďalšie bezpečnostné hlavičky, API dokumentácia v produkcii vypnutá.
