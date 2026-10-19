@@ -18,6 +18,15 @@ import { ProductFormModal } from "./ProductFormModal";
 
 const PAGE_SIZE = 25;
 
+const BUNDLE_OPTIONS = [
+  { value: "bez", label: "Bez balíčkov" }, { value: "iba", label: "Iba balíčky" }, { value: "vsetky", label: "Všetky" },
+];
+
+/** "2" -> "2. ročník"; imported values such as "1. ročník" or "Mateřská školka" stay as they are. */
+function formatGrade(grade: string) {
+  return /^\d+$/.test(grade.trim()) ? `${grade.trim()}. ročník` : grade;
+}
+
 function ProductList() {
   const isAdmin = useIsAdmin();
   const [params, setParams] = useSearchParams();
@@ -27,6 +36,8 @@ function ProductList() {
   const [debounced] = useDebouncedValue(search.trim(), 300);
   const priority = params.get("priority") ?? "";
   const market = params.get("market") ?? "";
+  // Bundles are mostly of no interest: hidden unless asked for (?balicky=iba or ?balicky=vsetky).
+  const bundles = params.get("balicky") ?? "bez";
   const sort = params.get("sort") ?? "name";
   const page = Number(params.get("page") ?? 1) || 1;
 
@@ -44,14 +55,18 @@ function ProductList() {
   useEffect(() => { if (debounced !== (params.get("q") ?? "")) update({ q: debounced || null }); }, [debounced]);
 
   const list = useProducts({ q: params.get("q") ?? undefined, priority: priority || undefined,
-                             market: market || undefined, sort, page, page_size: PAGE_SIZE });
+                             market: market || undefined, sort, page, page_size: PAGE_SIZE,
+                             bundles: bundles === "iba" ? "only" : bundles === "vsetky" ? undefined : "exclude" });
 
   const columns: Column<Product>[] = [
     { key: "name", label: "Názov", sortKey: "name", render: (p) => (
       <Stack gap={0}>
-        <Anchor component={Link} to={`/produkty/${p.id}`} fw={500} size="sm">{p.name}</Anchor>
+        <Group gap={6} wrap="nowrap">
+          <Anchor component={Link} to={`/produkty/${p.id}`} fw={500} size="sm">{p.name}</Anchor>
+          {p.is_bundle && <Badge size="xs" variant="light" color="grape" style={{ flexShrink: 0 }}>balíček</Badge>}
+        </Group>
         {(p.attributes.subject || p.attributes.grade) && (
-          <Text size="xs" c="dimmed">{[p.attributes.subject, p.attributes.grade && `${p.attributes.grade}. ročník`,
+          <Text size="xs" c="dimmed">{[p.attributes.subject, p.attributes.grade && formatGrade(p.attributes.grade),
                                         p.attributes.type].filter(Boolean).join(" · ")}</Text>
         )}
       </Stack>
@@ -84,6 +99,8 @@ function ProductList() {
                   onChange={(v) => update({ priority: v })} />
           <Select label="Trh" placeholder="Všetky" clearable w={120} value={market || null} data={["SK", "CZ"]}
                   onChange={(v) => update({ market: v })} />
+          <Select label="Balíčky" w={160} allowDeselect={false} value={bundles} data={BUNDLE_OPTIONS}
+                  onChange={(v) => update({ balicky: v === "bez" ? null : v })} />
         </Group>
         {isAdmin && (
           <Group>
@@ -95,7 +112,7 @@ function ProductList() {
       <DataTable columns={columns} rows={list.data?.items} rowKey={(p) => p.id} total={list.data?.total} page={page}
                  pageSize={PAGE_SIZE} sort={sort} onSortChange={(s) => update({ sort: s })}
                  onPageChange={(p) => update({ page: p }, false)} loading={list.isLoading} error={list.error}
-                 emptyText={params.get("q") || priority || market ? "Žiadny produkt nezodpovedá filtrom."
+                 emptyText={params.get("q") || priority || market || bundles !== "bez" ? "Žiadny produkt nezodpovedá filtrom."
                    : "Zatiaľ nie sú evidované žiadne vlastné produkty."} />
       <ProductFormModal opened={formOpened} onClose={form.close} />
       <ImportModal opened={importOpened} onClose={importer.close} />

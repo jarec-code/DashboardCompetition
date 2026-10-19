@@ -37,6 +37,7 @@ export interface Product {
   url: string | null;
   image_url: string | null;
   availability: Availability;
+  is_bundle: boolean;
   source_kind: "file" | "feed" | null;
   source: string | null;
   source_synced_at: string | null;
@@ -57,6 +58,7 @@ export interface ProductInput {
   priority: Priority;
   tracking_status: TrackingStatus;
   url: string | null;
+  is_bundle: boolean;
   prices: { market: string; price: string; currency: string | null; vat_mode: VatMode }[];
 }
 
@@ -65,6 +67,7 @@ export interface ProductListParams {
   priority?: string;
   tracking_status?: string;
   market?: string;
+  bundles?: "exclude" | "only";
   sort?: string;
   page?: number;
   page_size?: number;

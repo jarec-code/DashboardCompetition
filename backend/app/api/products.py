@@ -75,6 +75,7 @@ def list_products(
     priority: Literal["strategic", "regular", "stable"] | None = None,
     tracking_status: Literal["active", "paused"] | None = None,
     market: str | None = Query(default=None, max_length=16),
+    bundles: Literal["exclude", "only"] | None = None,  # default: all products
     sort: SortKey = "name",
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=25, ge=1, le=100),
@@ -93,6 +94,10 @@ def list_products(
         query = query.where(Product.priority == priority)
     if tracking_status:
         query = query.where(Product.tracking_status == tracking_status)
+    if bundles == "exclude":
+        query = query.where(Product.is_bundle.is_not(True))
+    elif bundles == "only":
+        query = query.where(Product.is_bundle.is_(True))
     if market:
         query = query.where(exists().where(ProductPrice.product_id == Product.id,
                                            ProductPrice.market == market.upper()))

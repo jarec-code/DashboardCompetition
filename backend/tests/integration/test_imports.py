@@ -177,8 +177,9 @@ def test_etaktik_feed_file_and_reruns(client, db):
     assert by_id["2374"]["status"] == by_id["3223"]["status"] == "error"  # archive item / worksheet: no price, no URL
     assert by_id["2849"]["status"] == "unchanged"  # the file's tag list does not replace the feed category
     assert by_id["3619"]["status"] == "ok"  # in the file only (not on the web): kept, marked by its source
+    assert by_id["2676"]["status"] == "ok" and by_id["2676"]["data"]["is_bundle"] is True  # Balíček pro 1. ročník
     result = commit(client, export)
-    assert (result["imported"], result["updated"], result["errors"]) == (1, 5, 2)
+    assert (result["imported"], result["updated"], result["errors"]) == (2, 5, 2)
     db.expire_all()
     abeceda = db.scalar(select(Product).where(Product.internal_id == "3"))
     assert abeceda.attributes == {"type": "Pracovní sešit", "grade": "1. ročník", "subject": "Čeština"}
@@ -188,7 +189,21 @@ def test_etaktik_feed_file_and_reruns(client, db):
 
     rerun = upload_fixture(client, "export_products.csv")
     assert {s for _, s in statuses(rerun)} == {"unchanged", "error"}
-    assert len(db.scalars(select(Product)).all()) == 9
+    assert len(db.scalars(select(Product)).all()) == 10
+
+
+def test_bundles_are_recognized_by_name_and_manual_decision_is_kept(client, db):
+    admin(client)
+    db.add(Product(name="Balíček Hravá čeština 1", internal_id="121", is_bundle=False))  # decided by hand
+    db.commit()
+    feed = upload_fixture(client, "heureka.xml")
+    rows = {r["data"]["internal_id"]: r for r in feed["rows"]}
+    assert rows["121"]["data"]["is_bundle"] is True and "balíček" not in rows["121"]["reason"]
+    assert rows["3"]["data"]["is_bundle"] is None  # a single title stays undecided
+    commit(client, feed)
+    db.expire_all()
+    assert db.scalar(select(Product).where(Product.internal_id == "121")).is_bundle is False
+    assert db.scalar(select(Product).where(Product.internal_id == "3")).is_bundle is None
 
 
 def test_existing_manual_products_are_matched_safely(client, db):

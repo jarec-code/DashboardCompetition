@@ -69,6 +69,7 @@ export function ProductDetailPage() {
         <Group gap="sm">
           <Title order={1} size="h2">{product.name}</Title>
           <Badge variant="light" color={PRIORITY_LABELS[product.priority].color}>{PRIORITY_LABELS[product.priority].label}</Badge>
+          {product.is_bundle && <Badge variant="light" color="grape">balíček</Badge>}
           {product.tracking_status === "paused" && <Badge variant="light" color="yellow">sledovanie pozastavené</Badge>}
         </Group>
         <Group gap="xs">

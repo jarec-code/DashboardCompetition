@@ -1,5 +1,5 @@
 import {
-  ActionIcon, Alert, Button, Divider, Group, Modal, Select, SimpleGrid, Stack, Text, TextInput,
+  ActionIcon, Alert, Button, Divider, Group, Modal, Select, SimpleGrid, Stack, Switch, Text, TextInput,
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
@@ -21,6 +21,7 @@ function initial(p?: Product): ProductInput & { priceRows: PriceRow[] } {
   return {
     name: p?.name ?? "", internal_id: p?.internal_id ?? null, isbn: p?.isbn ?? null, ean: p?.ean ?? null,
     sku: p?.sku ?? null, brand: p?.brand ?? null, category: p?.category ?? null, url: p?.url ?? null,
+    is_bundle: p?.is_bundle ?? false,
     attributes: { subject: p?.attributes.subject ?? null, grade: p?.attributes.grade ?? null,
                   type: p?.attributes.type ?? null, year: p?.attributes.year ?? null },
     priority: p?.priority ?? "regular", tracking_status: p?.tracking_status ?? "active", prices: [],
@@ -67,6 +68,7 @@ export function ProductFormModal({ opened, onClose, product }: { opened: boolean
     const payload: ProductInput = {
       name: form.name, internal_id: blank(form.internal_id), isbn: blank(form.isbn), ean: blank(form.ean),
       sku: blank(form.sku), brand: blank(form.brand), category: blank(form.category), url: blank(form.url),
+      is_bundle: form.is_bundle,
       attributes: { subject: blank(form.attributes.subject ?? null), grade: blank(form.attributes.grade ?? null),
                     type: blank(form.attributes.type ?? null), year: blank(form.attributes.year ?? null) },
       priority: form.priority, tracking_status: form.tracking_status,
@@ -118,6 +120,9 @@ export function ProductFormModal({ opened, onClose, product }: { opened: boolean
                     data={[{ value: "active", label: "Aktívne" }, { value: "paused", label: "Pozastavené" }]}
                     onChange={(v) => v && set("tracking_status", v as TrackingStatus)} />
           </SimpleGrid>
+          <Switch label="Balíček (viac titulov predávaných spolu)" checked={form.is_bundle}
+                  description="Balíčky sa v zozname produktov predvolene nezobrazujú."
+                  onChange={(e) => set("is_bundle", e.currentTarget.checked)} />
 
           <Divider label="Vlastné ceny podľa trhu" labelPosition="left" />
           {form.priceRows.map((row, i) => (

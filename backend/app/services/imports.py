@@ -22,7 +22,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models import Competitor, CompetitorProduct, ImportBatch, Product, ProductPrice
-from app.models.products import SOURCE_RANK
+from app.models.products import SOURCE_RANK, looks_like_bundle
 from app.schemas.products import CURRENCY_MARKET, ProductCreate
 from app.scraping.normalize import detect_currency, parse_price
 from app.services import matching
@@ -198,8 +198,8 @@ KEY_LABELS = {"internal_id": "interné ID", "sku": "SKU", "gtin": "ISBN/EAN", "u
               "ean": "EAN"}
 DESCRIPTIVE = ("name", "brand", "category", "url", "image_url")
 FIELD_LABELS = {"name": "názov", "brand": "značka", "category": "kategória", "url": "URL", "image_url": "obrázok",
-                "availability": "dostupnosť", "attributes": "parametre", "internal_id": "interné ID", "sku": "SKU",
-                "isbn": "ISBN", "ean": "EAN", "price": "cena"}
+                "availability": "dostupnosť", "attributes": "parametre", "is_bundle": "balíček",
+                "internal_id": "interné ID", "sku": "SKU", "isbn": "ISBN", "ean": "EAN", "price": "cena"}
 FEED_FORMATS = ("heureka", "google")
 _AVAILABILITY = (
     ("in_stock", ("in stock", "instock", "in_stock", "skladem", "na sklade", "available", "dostupn")),
@@ -272,6 +272,7 @@ def _validate_product(row: dict[str, Any], default_market: str | None) -> tuple[
         raise ValueError(_first_error(exc)) from None
     data = product.model_dump(mode="json")
     data["attributes"] = {k: v for k, v in (data["attributes"] or {}).items() if v}
+    data["is_bundle"] = True if looks_like_bundle(data["name"]) else None
     return data, notes
 
 
@@ -373,6 +374,8 @@ def _changes(product: Product, data: dict[str, Any], rank: int, catalogue: _Cata
     if availability and availability != "unknown" and availability != product.availability \
             and (product.availability == "unknown" or may_replace):
         changes["availability"] = availability
+    if data.get("is_bundle") and product.is_bundle is None:  # a decision made by hand is kept
+        changes["is_bundle"] = True
     attributes = dict(product.attributes or {})
     for key, value in (data.get("attributes") or {}).items():
         if value and attributes.get(key) != value and (not attributes.get(key) or may_replace):

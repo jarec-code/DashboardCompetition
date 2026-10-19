@@ -100,7 +100,7 @@ Vzor je v [.env.example](.env.example); skutočné heslá nikdy nepatria do repo
   skontrolujte (Alembic nezachytí zmeny CHECK obmedzení ani dáta).
 - Migrácie: `0001` jadro schémy, `0002` unikátne identifikátory, `0003` plánovanie a monitoring, `0004`
   upozornenia s predvolenými pravidlami, `0005` importy, `0006` verzia relácie, `0007` URL, obrázok, dostupnosť
-  a zdroj údajov vlastného produktu.
+  a zdroj údajov vlastného produktu, `0008` príznak balíčka.
 
 ## Práca s aplikáciou
 
@@ -121,6 +121,11 @@ s reťazou; zhoda ISBN/EAN/SKU sa priradí automaticky, podobné názvy čakajú
 Tlačidlo „Synchronizovať teraz“ požiada worker o okamžitý beh (do pol minúty). Každý beh stiahne feed jednou
 požiadavkou, pridá nové produkty, aktualizuje ceny, URL, obrázky, kategórie a dostupnosť existujúcich a pod
 výsledkom vypíše položky na ručnú kontrolu. Postup a výsledky prvého načítania: [docs/ETAKTIK_IMPORT.md](docs/ETAKTIK_IMPORT.md).
+
+**Balíčky.** Produkt môže byť označený ako balíček (viac titulov predávaných spolu). Zoznam produktov ich
+predvolene nezobrazuje; filter „Balíčky“ ponúka „Bez balíčkov“, „Iba balíčky“ a „Všetky“. Import a synchronizácia
+označia ako balíček produkt, ktorého názov obsahuje „balíček“ (Balíček pro 1. ročník, Výhodný balíček …,
+Koumákův balíček …); ručne nastavený príznak (prepínač vo formulári produktu) import nikdy neprepíše.
 
 **Import produktov zo súboru.** Produkty → Import: CSV (UTF-8 aj Windows-1250), Excel .xlsx alebo XML feed
 (Heureka, Google Merchant). Povinný stĺpec `name`; ďalej `price`, `market`, `currency`, `isbn`, `ean`, `sku`,

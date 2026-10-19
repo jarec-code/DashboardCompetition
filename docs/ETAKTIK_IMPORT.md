@@ -74,3 +74,19 @@ Postup pre opätovné načítanie (zápis robí administrátor v aplikácii):
 
 Ďalej sa katalóg aktualizuje sám raz denne. Položky na kontrolu (nejednoznačná zhoda) sú vypísané v Nastaveniach pod
 výsledkom posledného behu.
+
+## Balíčky
+
+V priloženom exporte je **17 balíčkov**, všetky s názvom „Balíček pro 1./2. ročník …“ (ID 2676, 2716–2719,
+2911, 2914, 2915, 3397–3400, 4272, 4325–4328); 13 z nich má marketingovú skupinu „Balíček do katalogu 2025/2026“.
+Kategória „Zvýhodněné balíčky“ sama nestačí: má ju aj samostatná kniha „První čtení: Mína a Maxík letí balónem“
+a „Dárková taška“ je v kategórii „Zvýhodněné procvičovací balíčky“.
+
+Pravidlo preto vychádza z názvu: produkt je balíček, ak názov obsahuje „balíček“. Vo feede e-shopu ho spĺňa 152
+produktov (napr. „Balíček Hravá čeština 5“, „Výhodný balíček – …“, „Koumákův balíček …“, „Učitelský balíček …“,
+„Balíček Maturita …“), vrátane všetkých 17 z exportu. Príznak sa uložil aj existujúcim produktom (migrácia `0008`).
+
+Niektoré položky z kategórie „Zvýhodněné procvičovací balíčky“ sú pravdepodobne tiež balíčky, hoci to v názve
+nemajú (napr. „Zábavný pomocník pro 1. ročník“, „Procvičování s úsměvem pro 1. ročník“, „Kompletní hravé procvičování
+pro 1. ročník“, „Knihy pro aktivní prázdniny“, „6 samolepkových knih + prázdninový deník“). Automaticky sa neoznačili,
+lebo v tej istej kategórii sú aj samostatné tituly; dajú sa označiť ručne vo formulári produktu.

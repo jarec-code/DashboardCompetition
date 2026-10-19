@@ -29,6 +29,16 @@ test("vlastné produkty z feedu e-shopu: synchronizácia a opakovaný beh", asyn
   await expect(page.getByRole("link", { name: "etaktik.cz/keep-calm-draw-animals/" })).toBeVisible();
   await expect(page.getByText(/CZ:\s*156,00/)).toBeVisible();
 
+  // Bundles are hidden by default; the filter shows them.
+  await page.goto("/produkty");
+  await page.getByLabel("Hľadať").fill("Hravá čeština 1");
+  await expect(page.getByText("Žiadny produkt nezodpovedá filtrom.")).toBeVisible();
+  await page.getByRole("combobox", { name: "Balíčky" }).click();
+  await page.getByRole("option", { name: "Iba balíčky" }).click();
+  const bundle = page.getByRole("table").locator("tbody tr").filter({ hasText: "Balíček Hravá čeština 1" });
+  await expect(bundle.getByText("balíček", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/balicky=iba/);
+
   await page.goto("/nastavenia");  // the same feed again: no duplicates, nothing changes
   await section.getByRole("button", { name: "Synchronizovať teraz" }).click();
   await expect(section.getByText(/nové\s*0\s*·\s*aktualizované\s*0\s*·\s*bez zmeny\s*8/)).toBeVisible({ timeout: 20_000 });

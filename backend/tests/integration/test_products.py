@@ -124,3 +124,16 @@ def test_eshop_url_availability_and_source_fields(client):
     assert r.status_code == 409 and "URL" in r.json()["detail"]
     assert client.post("/api/products", json={**PRODUCT, "url": "ftp://x.cz/a"}).status_code == 422
     assert client.post("/api/products", json={**PRODUCT, "availability": "maybe"}).status_code == 422
+
+
+def test_bundle_flag_and_filter(client):
+    admin(client)
+    single = create(client)
+    bundle = create(client, name="Balíček pro 1. ročník", isbn=None, is_bundle=True)
+    assert (single["is_bundle"], bundle["is_bundle"]) == (False, True)  # undecided counts as a single product
+    names = lambda **f: [p["name"] for p in client.get("/api/products", params=f).json()["items"]]  # noqa: E731
+    assert names() == ["Balíček pro 1. ročník", PRODUCT["name"]]
+    assert names(bundles="exclude") == [PRODUCT["name"]]
+    assert names(bundles="only") == ["Balíček pro 1. ročník"]
+    assert client.get("/api/products", params={"bundles": "maybe"}).status_code == 422
+    assert client.patch(f"/api/products/{bundle['id']}", json={"is_bundle": False}).json()["is_bundle"] is False

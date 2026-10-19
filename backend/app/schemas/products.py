@@ -104,6 +104,7 @@ class ProductFields(BaseModel):
     url: str | None = Field(default=None, max_length=2048)
     image_url: str | None = Field(default=None, max_length=2048)
     availability: Availability | None = None
+    is_bundle: bool | None = None
 
     _t = field_validator("internal_id", "brand", "category")(_text)
     _i = field_validator("isbn")(_isbn)
@@ -178,9 +179,15 @@ class ProductOut(BaseModel):
     url: str | None
     image_url: str | None
     availability: str
+    is_bundle: bool
     source_kind: str | None
     source: str | None
     source_synced_at: datetime | None
     offer_count: int = 0
     created_at: datetime
+
+    @field_validator("is_bundle", mode="before")
+    @classmethod
+    def undecided_is_single(cls, value: bool | None) -> bool:
+        return bool(value)
     updated_at: datetime

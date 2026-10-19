@@ -1,8 +1,9 @@
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -18,6 +19,13 @@ MATCHING_METHODS = ("identifier", "name", "manual", "ai")
 # data entered by hand before any import (NULL). Imports overwrite filled fields only from an equal or better source.
 SOURCE_KINDS = ("file", "feed")
 SOURCE_RANK = {None: 0, "file": 1, "feed": 2}
+
+
+BUNDLE_NAME = re.compile(r"bal[íi]č", re.IGNORECASE)  # Balíček…, Výhodný balíček…, Učitelský balíček…
+
+
+def looks_like_bundle(name: str) -> bool:
+    return bool(BUNDLE_NAME.search(name or ""))
 
 
 class Product(TimestampMixin, Base):
@@ -42,6 +50,9 @@ class Product(TimestampMixin, Base):
     attributes: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, server_default="{}")
     priority: Mapped[str] = mapped_column(String(16), default="regular")
     tracking_status: Mapped[str] = mapped_column(String(16), default="active")
+    # A bundle of several titles ("Balíček pro 1. ročník"); NULL = not decided (treated as a single product).
+    # Imports set it only when it is NULL, so a decision made by hand is never overwritten.
+    is_bundle: Mapped[bool | None] = mapped_column(Boolean)
     url: Mapped[str | None] = mapped_column(String(2048), unique=True)  # product page in our own e-shop
     image_url: Mapped[str | None] = mapped_column(String(2048))
     availability: Mapped[str] = mapped_column(String(16), default="unknown", server_default="unknown")

@@ -513,6 +513,15 @@ konkurent sa nespracúva a v UI sú viditeľné výsledky aj chyby behov. Overi�
 
 ---
 
+### Doplnok: Balíčky ✅ 19. 10. 2026
+
+- Príznak `is_bundle` (migrácia `0008`, existujúce produkty označené podľa názvu), rozpoznanie pri importe podľa
+  slova „balíček“ v názve, ručné rozhodnutie má prednosť. Zoznam produktov predvolene bez balíčkov, filter Balíčky,
+  štítok v zozname a detaile, prepínač vo formulári. Analýza: [ETAKTIK_IMPORT.md](ETAKTIK_IMPORT.md#balíčky).
+- Testy: backend 337, e2e 29 (filter v teste synchronizácie feedu).
+
+---
+
 ### Etapa 10 (voliteľná): Playwright pre weby vyžadujúce JavaScript
 
 Iba ak niektorý konkurent neposkytuje dáta v HTML, JSON-LD ani feede.
