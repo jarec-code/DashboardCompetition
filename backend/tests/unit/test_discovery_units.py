@@ -87,3 +87,15 @@ def test_cart_and_login_pages_are_never_entry_pages_nor_followed():
     home = ('<a href="/obchod/index.php?item=nakupni-kosik">Košík</a><a href="/obchod/?item=prihlasit">Přihlásit</a>'
             '<a href="/obchod/?item=zaregistrovat">Registrace</a><a href="/obchod/?item=nabidka">E-shop</a>')
     assert _catalogue_links(home, "https://www.nns.cz/", "nns.cz") == ["https://www.nns.cz/obchod/?item=nabidka"]
+
+
+def test_tab_segments_need_many_listed_parents():
+    from app.scraping.catalog import is_tab, tab_segments
+
+    books = [f"/fyzika/kniha-{n}" for n in range(12)]
+    paths = books + [f"{b}/{t}" for b in books for t in ("obsah", "ukazky")] + ["/fyzika", "/o-nas/kontakt"]
+    assert tab_segments(paths) == {"obsah", "ukazky"}
+    assert is_tab("/fyzika/kniha-3/obsah", {"obsah"}) and not is_tab("/obsah", {"obsah"})
+    few = books[:5] + [f"{b}/obsah" for b in books[:5]]  # five books with a tab: an ordinary category
+    assert tab_segments(few) == set()
+    assert tab_segments([f"/kategorie/{n}" for n in range(30)] + ["/kategorie"]) == set()  # children of one page

@@ -24,6 +24,7 @@ from app.services.urls import InvalidUrl, normalize_url
 
 SOURCE_TYPES = ("sitemap", "feed", "listing", "adapter")
 MAX_SITEMAP_CHILDREN = 50
+TAB_MIN_PARENTS = 10  # a last path segment under this many pages that are themselves listed = a tab of a page
 _SITEMAP_NS = re.compile(r"^\{[^}]+\}")
 
 
@@ -43,6 +44,7 @@ class FoundItem:
 class PageResult:
     items: list[FoundItem] = field(default_factory=list)
     next_urls: list[str] = field(default_factory=list)  # further pages / sitemaps of the same source
+    tabs: list[str] = field(default_factory=list)  # sitemap: last path segments of tab pages left out
 
 
 def _belongs(url: str, domain: str) -> bool:
@@ -74,6 +76,7 @@ def read_sitemap(text: str, page_url: str, domain: str, pattern: str | None = No
     if _local(root.tag) != "urlset":
         raise ValueError("Neznámy formát sitemap (očakáva sa urlset alebo sitemapindex).")
     regex = re.compile(pattern) if pattern else None
+    tabs = tab_segments([urlsplit(u).path for u in locs])
     items = []
     for raw in locs:
         try:
@@ -85,8 +88,29 @@ def read_sitemap(text: str, page_url: str, domain: str, pattern: str | None = No
             continue
         if regex and not regex.search(path):
             continue
+        if is_tab(path, tabs):
+            continue
         items.append(FoundItem(key=url, url=url))
-    return PageResult(items=items)
+    return PageResult(items=items, tabs=sorted(tabs))
+
+
+def tab_segments(paths: list[str]) -> set[str]:
+    """Tabs of product pages in a sitemap: a page /ucebnice/prirodopis-6 listed together with
+    /ucebnice/prirodopis-6/obsah, …/ukazky, …/ke_stazeni, the same last segments under many listed pages.
+    Such tabs repeat the product (title, price, ISBN) and would cost a request each (ucebnice.org: 8 tabs
+    for each of 332 products, 87 % of its sitemap)."""
+    listed = {p.rstrip("/") for p in paths}
+    parents: dict[str, set[str]] = {}
+    for path in listed:
+        parent, _, last = path.rpartition("/")
+        if parent and last and parent in listed:
+            parents.setdefault(last, set()).add(parent)
+    return {last for last, found in parents.items() if len(found) >= TAB_MIN_PARENTS}
+
+
+def is_tab(path: str, tabs: set[str] | list[str]) -> bool:
+    parent, _, last = path.rstrip("/").rpartition("/")
+    return bool(parent) and last in tabs
 
 
 # ---------- feed ----------

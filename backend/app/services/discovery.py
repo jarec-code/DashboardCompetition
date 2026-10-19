@@ -866,6 +866,8 @@ class Runner:
                 result = catalog.read_listing(response.text or "", response.url, domain, source.pattern)
         except ValueError as exc:
             raise FetchError(f"Zdroj sa nedá prečítať: {exc}", "permanent") from None
+        if result.tabs:
+            self._set_stats(tabs=sorted(set(self.run.stats.get("tabs") or []) | set(result.tabs)))
         self.run.queue = self.run.queue[1:]
         done = list(self.run.done_urls) + [url]
         self.run.done_urls = done
@@ -979,11 +981,14 @@ class Runner:
                 CatalogItem.match_status == "new").order_by(CatalogItem.id).limit(ENRICH_WINDOW)))
             if not batch:
                 return None
-            dead = [i for i in batch if crawl.dead(template(i.url), stats)]
+            tabs = self.run.stats.get("tabs") or []  # tabs of product pages found in the sitemap
+            dead = [i for i in batch
+                    if crawl.dead(template(i.url), stats) or catalog.is_tab(urlsplit(i.url).path, tabs)]
             if dead:
                 for item in dead:
-                    self._enriched(item, error="Preskočené: stránky tohto typu (šablóna URL) nie sú produkty.",
-                                   status="skipped")
+                    tab = catalog.is_tab(urlsplit(item.url).path, tabs)
+                    self._enriched(item, error="Preskočené: záložka stránky produktu (opakuje produkt)." if tab else
+                                   "Preskočené: stránky tohto typu (šablóna URL) nie sú produkty.", status="skipped")
                     self._stat("skipped_urls")
                 continue
             # Page types that gave products first, unknown types next, the rest last: the budget goes to

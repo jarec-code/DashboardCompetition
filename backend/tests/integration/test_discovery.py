@@ -527,12 +527,16 @@ def test_recipe_api_validates_and_renews_the_diagnosis(client, db):
 PRODOS_PAGE = (Path(__file__).parent.parent / "fixtures" / "html" / "prodos" / "cesky-slabikar-1.html").read_bytes()
 
 
-def prodos_site(products: int = 6, forbidden: list[str] | None = None) -> FakeSite:
+PRODOS_TABS = ("obsah", "namety", "ukazky", "ke_stazeni", "rada", "reseni-uloh", "klicove-kompetence", "vysledky")
+
+
+def prodos_site(products: int = 6, forbidden: list[str] | None = None, tabs: bool = False) -> FakeSite:
     """Like ucebnice.org: a sitemap starting with information pages (one of them, the forum, is closed: 403),
     product pages without structured data ("cena vč. DPH: 102.00 Kč")."""
     info = ["nakupovani", "obchodni-podminky", "reklamacni-rad", "forum", "odkazy", "uvod", "mapa-webu"]
     books = [f"cesky-jazyk-1st/slabikar-{n}" for n in range(1, products + 1)]
-    locs = [f"https://ucebnice.example.cz/{p}" for p in info + books]
+    tab_pages = [f"{b}/{t}" for b in books for t in PRODOS_TABS] if tabs else []  # each tab repeats the product
+    locs = [f"https://ucebnice.example.cz/{p}" for p in info + books + tab_pages]
     sitemap = '<?xml version="1.0"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' + \
               "".join(f"<url><loc>{u}</loc></url>" for u in locs) + "</urlset>"
     pages = {"/robots.txt": (200, "User-agent: *\nSitemap: https://ucebnice.example.cz/sitemap.xml\n"),
@@ -545,6 +549,8 @@ def prodos_site(products: int = 6, forbidden: list[str] | None = None) -> FakeSi
         if n > 1:  # one ISBN per title: only the first keeps the real one
             page = page.replace(b"978-80-7230-170-6", b"")
         pages[f"/cesky-jazyk-1st/slabikar-{n}"] = (200, page, "text/html; charset=UTF-8")
+        for tab in PRODOS_TABS if tabs else ():
+            pages[f"/cesky-jazyk-1st/slabikar-{n}/{tab}"] = (200, page, "text/html; charset=UTF-8")
     for path in forbidden or []:
         pages[path] = (403, "<h1>403 Forbidden</h1>")
     return FakeSite(pages)
@@ -562,6 +568,25 @@ def test_one_closed_page_does_not_stop_discovery_and_products_are_read_first(db)
         Decimal("101.00"), {"isbn": "9788072301706"}, "Český slabikář 1")
     if "/forum" in site.requests:  # read at the end (if at all): recorded as a failure of that page
         assert items["forum"].fetch_status == "failed" and "403" in items["forum"].enrich_error
+
+
+def test_tabs_of_product_pages_in_the_sitemap_are_not_read(db):
+    c = competitor(db, "Prodos", "https://ucebnice.example.cz/", "ucebnice.example.cz")
+    tab = "https://ucebnice.example.cz/cesky-jazyk-1st/slabikar-1/obsah"
+    queued = CatalogItem(competitor_id=c.id, key=tab, url=tab, first_seen_at=datetime.now(UTC),
+                         match_status="new", status="active", identifiers={}, hints={}, attributes={}, candidates=[],
+                         missing_runs=0, price_from_listing=False)  # queued by an earlier run, before tabs were known
+    db.add(queued)
+    db.commit()
+    site = prodos_site(products=12, tabs=True)  # 12 products, 96 tabs
+    run = run_all(db, site)
+    assert run.status in ("succeeded", "partial"), run.error
+    assert not [r for r in site.requests if r.rsplit("/", 1)[1] in PRODOS_TABS]  # not one tab read
+    assert run.stats["tabs"] == sorted(PRODOS_TABS)
+    db.refresh(queued)
+    assert queued.fetch_status == "skipped" and "záložka" in queued.enrich_error
+    keys = {i.key for i in db.scalars(select(CatalogItem).where(CatalogItem.price.is_not(None)))}
+    assert len(keys) == 12
 
 
 def test_forbidden_on_several_pages_in_a_row_means_blocking(db):
