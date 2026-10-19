@@ -99,3 +99,15 @@ def test_tab_segments_need_many_listed_parents():
     few = books[:5] + [f"{b}/obsah" for b in books[:5]]  # five books with a tab: an ordinary category
     assert tab_segments(few) == set()
     assert tab_segments([f"/kategorie/{n}" for n in range(30)] + ["/kategorie"]) == set()  # children of one page
+
+
+def test_grade_from_the_number_after_the_subject_or_the_pupils():
+    from app.services.comparable import _grades, plain
+
+    cases = {"Barevná čeština 1": {"1"}, "Barevná čeština pro prvňáčky, pracovní sešit": {"1"},
+             "Barevná čeština pro třeťáky": {"3"}, "Prvouka 2 pro ZŠ, pracovní sešit": {"2"},
+             "Matematika 1 – 3. díl": {"1"}, "Český jazyk 9, 1. díl: Učivo o jazyce": {"9"},
+             "Přírodopis 6 – Rostliny": {"6"}, "Hudební výchova pro 2. stupeň ZŠ": set(),
+             "Angličtina 2 díl": set(), "Matematika pro 3. ročník": {"3"}}
+    for title, grades in cases.items():
+        assert _grades(plain(title)) == grades, title

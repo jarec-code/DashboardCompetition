@@ -66,6 +66,10 @@ BUNDLE = re.compile(r"\b(komplet|balic|sada)", re.I)
 REVISED = re.compile(r"\s*[-–—]?\s*(revidovan[eé]|rev\.)\s*RVP(\s*ZV)?\s*$", re.I)
 _GRADE = re.compile(r"(\d)\s*\.?\s*(?:-\s*(\d)\s*\.?\s*)?(?:rocnik|trid)")  # on plain() text
 _PART = re.compile(r"(\d)\s*\.\s*dil|dil\s*(\d)")
+# Pupils of a grade: "Barevná čeština pro prvňáčky", "… pro třeťáky".
+_PUPILS = {"prvnack": "1", "prvnak": "1", "druhak": "2", "tretak": "3", "ctvrtak": "4", "patak": "5",
+           "sestak": "6", "sedmak": "7", "osmak": "8", "devatak": "9"}
+_PUPIL = re.compile(r"\b(" + "|".join(_PUPILS) + ")")
 
 
 def plain(text: str | None) -> str:
@@ -88,8 +92,18 @@ class Profile:
                 "parts": sorted(self.parts), "bundle": self.bundle}
 
 
+def _subject_number() -> re.Pattern:
+    """A grade as a number right after the subject: "Barevná čeština 1", "Prvouka 2 pro ZŠ", "Přírodopis 6",
+    "Český jazyk 9, 1. díl" (not a part "3. díl", a level "2. stupeň" or a range "1-5")."""
+    stems = sorted({re.escape(w) for words in SUBJECTS.values() for w in words}, key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(stems) + r")[a-z]*\s+([1-9])(?![\d.]|-\d)"
+                      r"(?!\s*(?:dil|stupen|cast|svazek|pololet))")
+
+
 def _grades(text: str) -> frozenset[str]:
     found: set[str] = set()
+    found.update(_SUBJECT_NUMBER.findall(text))
+    found.update(_PUPILS[m] for m in _PUPIL.findall(text))
     for first, last in _GRADE.findall(text):
         end = int(last) if last else int(first)
         found.update(str(g) for g in range(int(first), max(int(first), end) + 1))
@@ -98,6 +112,9 @@ def _grades(text: str) -> frozenset[str]:
     if re.search(r"\b(ss|stredni skol|gymnazi|sou|sos|maturit)", text):
         found.add("SS")
     return frozenset(found)
+
+
+_SUBJECT_NUMBER = _subject_number()
 
 
 def _subjects(text: str) -> frozenset[str]:
