@@ -5,7 +5,9 @@ The shop page /obchod/?item=nabidka draws its products in the browser from
 which answers a list of items: {"type": "item", "id": 1649, "name": "Zápis je tu", "code": "P-50", "price": 99,
 "status": "skladem", "tag_matches": 1, …}. Tags come from GET /obchod/api/inventory/tags/filters:
 category 5 = "Učebnice a sešity", grades 17 (preschool) and 7–15 (1st–9th grade). With two tags the interface
-also returns items matching one of them; tag_matches == 2 are the items of the grade.
+also returns items matching one of them; tag_matches == 2 are the items of the grade. They come first (the
+answer is ordered by tag_matches), so paging stops at the first page with an item matching one tag only:
+about 15 requests for the whole catalogue instead of ~90.
 
 Discovery queues one address per grade, e.g. https://www.nns.cz/obchod/api/inventory/60/0?tags=5,7, and pages
 through it by the offset. The tags are in the query of the queued address only (stored addresses keep their
@@ -23,7 +25,16 @@ CATEGORY_TEXTBOOKS = 5
 GRADES = {17: "předškolní vzdělávání", 7: "1. ročník", 8: "2. ročník", 9: "3. ročník", 10: "4. ročník",
           11: "5. ročník", 12: "6. ročník", 13: "7. ročník", 14: "8. ročník", 15: "9. ročník"}
 AVAILABILITY = {"skladem": "in_stock", "doprodej": "in_stock", "novinka": "in_stock", "bonus": "in_stock",
-                "vyprodano": "out_of_stock", "pripravujeme": "preorder"}
+                "vyprodano": "out_of_stock", "prodej-ukoncen": "out_of_stock", "pripravujeme": "preorder"}
+
+
+def _price(raw: Any) -> Decimal | None:
+    """The shop shows `discount_price` as the price (the regular `price` struck through when they differ)."""
+    try:
+        value = Decimal(str(raw)).quantize(Decimal("0.01"))
+    except (ArithmeticError, ValueError):
+        return None
+    return value if value > 0 else None
 
 
 def start_urls() -> tuple[str, ...]:
@@ -55,15 +66,16 @@ def read(text: str, page_url: str):
     base, offset, tags = _parts(page_url)
     grade = GRADES.get(tags[-1]) if len(tags) > 1 else None
     origin = "{0.scheme}://{0.netloc}".format(urlsplit(page_url))
-    items = []
+    items, partial = [], False
     for row in rows:
         if not isinstance(row, dict) or row.get("type") != "item" or not row.get("id"):
             continue
         if len(tags) > 1 and row.get("tag_matches", 0) < len(tags):
+            partial = True
             continue  # matches the category or the grade only
-        price = row.get("price")
-        value = Decimal(str(price)).quantize(Decimal("0.01")) if isinstance(price, (int, float, str)) and str(price) \
-            else None
+        value = _price(row.get("discount_price")) or _price(row.get("price"))
+        if value is None:
+            continue  # free or withdrawn (price 0): nothing to compare
         hints = {"grade": grade} if grade else {}
         if row.get("status"):
             hints["availability"] = AVAILABILITY.get(str(row["status"]).lower(), "unknown")
@@ -72,9 +84,9 @@ def read(text: str, page_url: str):
         url = f"{origin}/obchod/index.php?item=nab_det&sort_id={row['id']}"
         items.append(FoundItem(key=f"nns:{row['id']}", url=url,
                                title=str(row.get("name") or "").strip() or None, price=value,
-                               currency="CZK" if value is not None else None, price_from_listing=value is not None,
+                               currency="CZK", price_from_listing=True,
                                hints=hints))
     next_urls = []
-    if len(rows) >= LIMIT:
+    if len(rows) >= LIMIT and not partial:
         next_urls.append(f"{base}/{LIMIT}/{offset + LIMIT}?tags={','.join(str(t) for t in tags)}")
     return PageResult(items=items, next_urls=next_urls)

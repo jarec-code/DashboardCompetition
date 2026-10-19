@@ -754,13 +754,18 @@ def test_nns_json_listing_per_grade_with_paging(db):
         if tags == [5, 17]:
             return [{"type": "item", "id": 1649, "name": "Zápis je tu", "code": "P-50", "price": 99,
                      "status": "skladem", "tag_matches": 2}]
-        if tags == [5, 7] and offset == 0:  # a full page: the next one is read too
-            rows = [{"type": "item", "id": 2000 + i, "name": f"Matematika 1 – {i}. díl", "price": 75 + i,
-                     "status": "skladem", "tag_matches": 2} for i in range(59)]
-            return rows + [{"type": "item", "id": 9999, "name": "Jiný ročník", "price": 10, "tag_matches": 1}]
-        if tags == [5, 7] and offset == 60:
-            return [{"type": "item", "id": 3000, "name": "Písanka 1", "price": "39.0", "status": "vyprodano",
-                     "tag_matches": 2}]
+        if tags == [5, 7] and offset == 0:  # a full page of the grade: the next one is read too
+            return [{"type": "item", "id": 2000 + i, "name": f"Matematika 1 – {i}. díl", "price": 75 + i,
+                     "status": "skladem", "tag_matches": 2} for i in range(60)]
+        if tags == [5, 7] and offset == 60:  # the grade ends here (items of one tag follow): no further page
+            return [{"type": "item", "id": 3000, "name": "Písanka 1", "price": "39.0", "status": "prodej-ukoncen",
+                     "tag_matches": 2},
+                    {"type": "item", "id": 3001, "name": "Okénko do češtiny 1", "price": 149, "discount_price": 141.55,
+                     "discount_str": "5%", "status": "skladem", "tag_matches": 2},
+                    {"type": "item", "id": 3002, "name": "Pracovní listy pro 1. ročník", "price": 0,
+                     "discount_price": 0, "status": "prodej-ukoncen", "tag_matches": 2}] + [
+                {"type": "item", "id": 9000 + i, "name": "Jiný", "price": 10, "tag_matches": 1} for i in range(57)]
+        assert offset == 0, (offset, tags)
         return []
 
     site = JsonSite({"/robots.txt": (200, "User-agent: *\nDisallow: /admin/\n")}, listing)
@@ -770,7 +775,7 @@ def test_nns_json_listing_per_grade_with_paging(db):
     assert site.posts[0] == ("/obchod/api/inventory/60/0", {"tags": [5, 17], "query": "", "packages": False,
                                                              "ids": []})
     assert ("/obchod/api/inventory/60/60", {"tags": [5, 7], "query": "", "packages": False, "ids": []}) in site.posts
-    assert run.stats["found"] == 61  # the item of another grade is left out
+    assert run.stats["found"] == 63  # 1 preschool + 61 of grade 1; items of one tag only are left out
     stored = settings_of(db, nns).source.urls  # the grades survive storing the source
     assert len(set(stored)) == 10 and "https://www.nns.cz/obchod/api/inventory/60/0?tags=5,17" in stored
     item = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:1649"))
@@ -782,4 +787,8 @@ def test_nns_json_listing_per_grade_with_paging(db):
     assert third.product_id == math.id or third.candidates[0]["product_id"] == math.id
     sold_out = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:3000"))
     assert sold_out.hints["grade"] == "1. ročník" and sold_out.price == Decimal("39.00")
-    assert db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:9999")) is None
+    assert sold_out.hints["availability"] == "out_of_stock"
+    discounted = db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:3001"))
+    assert discounted.price == Decimal("141.55")  # the price the shop shows (the regular one is struck through)
+    assert db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:3002")) is None  # free / withdrawn
+    assert db.scalar(select(CatalogItem).where(CatalogItem.key == "nns:9000")) is None
