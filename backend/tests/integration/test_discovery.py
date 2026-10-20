@@ -967,3 +967,22 @@ def test_printed_book_is_not_matched_with_an_interactive_textbook_and_such_offer
     run = run_all(db, site)
     db.refresh(offer)
     assert run.stats["untracked"] == 1 and offer.status == "archived"
+
+
+def test_items_of_an_earlier_source_do_not_lower_the_quality(db):
+    c = competitor(db, "NNS", "https://www.nns.cz/", "nns.cz")
+    for n in range(30):  # blog pages read by the crawler before the shop's interface was used
+        url = f"https://www.nns.cz/blog/clanek-{n}"
+        db.add(CatalogItem(competitor_id=c.id, key=url, url=url, title=f"Článek {n}", match_status="unrelated",
+                           status="active", fetch_status="not_product", enriched_at=datetime.now(UTC),
+                           identifiers={}, hints={}, attributes={}, candidates=[], missing_runs=0,
+                           price_from_listing=False, first_seen_at=datetime.now(UTC)))
+    db.commit()
+
+    def listing(offset, tags):
+        rows = [{"type": "item", "id": 100 * tags[-1] + i, "name": f"Matematika {tags[-1] - 6} – {i}. díl",
+                 "price": 70 + i, "status": "skladem", "tag_matches": 2} for i in range(3)]
+        return rows if offset == 0 else []
+
+    run = run_all(db, JsonSite({"/robots.txt": (200, "User-agent: *\n")}, listing))
+    assert run.stats["quality_ok"] is True, run.stats["quality_note"]

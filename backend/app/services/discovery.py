@@ -1299,13 +1299,13 @@ class Runner:
 
     def _quality(self) -> tuple[bool, str]:
         stats = self.run.stats
-        seen = list(self.db.scalars(select(CatalogItem).where(CatalogItem.competitor_id == self.competitor.id,
-                                                               CatalogItem.status == "active")))
+        keys = set(self.run.seen_keys)  # this run's products: items of an earlier source do not count
+        seen = [i for i in self.db.scalars(select(CatalogItem).where(CatalogItem.competitor_id == self.competitor.id,
+                                                                      CatalogItem.status == "active"))
+                if not keys or i.key in keys]
         with_data = [i for i in seen if i.price_from_listing or (i.enriched_at and not i.enrich_error)]
         read = [i for i in seen if i.price_from_listing or i.enriched_at]
-        pending = self.db.scalar(select(func.count(CatalogItem.id)).where(
-            CatalogItem.competitor_id == self.competitor.id, CatalogItem.status == "active",
-            CatalogItem.price_from_listing.is_(False), CatalogItem.enriched_at.is_(None)))
+        pending = sum(1 for i in seen if not i.price_from_listing and i.enriched_at is None)
         if pending:
             return False, f"{pending} produktov ešte nebolo načítaných (rozpočet), pokračuje sa ďalší beh."
         priced = [i for i in with_data if i.price is not None]
